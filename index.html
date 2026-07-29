@@ -237,6 +237,27 @@
         .kpi-card { transition: transform .3s ease, box-shadow .3s ease; }
         .kpi-card:hover { transform: translateY(-5px); box-shadow: var(--glass-shadow-lg); }
 
+        /* ---- Progress bars ---- */
+        .progress-track {
+            background: rgba(148, 163, 184, 0.25);
+            border-radius: 999px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-2));
+            box-shadow: 0 1px 6px -1px rgba(74, 144, 226, 0.5);
+            transform-origin: left center;
+            animation: growX .9s cubic-bezier(.22, 1, .36, 1) both;
+        }
+        @keyframes growX { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+        @media (prefers-reduced-motion: reduce) { .progress-fill { animation: none; } }
+
+        /* Nudge interactive list rows / quick actions on hover */
+        .hover-slide { transition: transform .2s ease, background .2s ease, box-shadow .2s ease; }
+        .hover-slide:hover { transform: translateX(4px); }
+
         /* ---- Nav (legacy top nav classes, kept for safety) ---- */
         .nav-active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
         .nav-inactive { border-bottom-color: transparent; color: var(--text-muted); }
