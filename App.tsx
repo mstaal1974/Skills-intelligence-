@@ -220,6 +220,95 @@ const useDarkMode = (): [boolean, () => void] => {
     return [dark, () => setDark(d => !d)];
 };
 
+// --- Theme + chart helpers ---------------------------------------------------
+
+// Read a CSS custom property from :root so canvas charts match the active theme.
+const cssVar = (name: string, fallback: string): string => {
+    if (typeof window === 'undefined') return fallback;
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+};
+const isDarkTheme = () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+
+// Re-render charts when the light/dark class on <html> flips.
+const useThemeTick = (): number => {
+    const [tick, setTick] = useState(0);
+    useEffect(() => {
+        const obs = new MutationObserver(() => setTick(t => t + 1));
+        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        return () => obs.disconnect();
+    }, []);
+    return tick;
+};
+
+// Animated count-up for KPI figures (respects reduced-motion).
+const useCountUp = (target: number, duration = 900): number => {
+    const [val, setVal] = useState(0);
+    useEffect(() => {
+        if (typeof window === 'undefined') { setVal(target); return; }
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setVal(target); return; }
+        let raf = 0;
+        const start = performance.now();
+        const step = (now: number) => {
+            const p = Math.min(1, (now - start) / duration);
+            const eased = 1 - Math.pow(1 - p, 3);
+            setVal(Math.round(target * eased));
+            if (p < 1) raf = requestAnimationFrame(step);
+        };
+        raf = requestAnimationFrame(step);
+        return () => cancelAnimationFrame(raf);
+    }, [target, duration]);
+    return val;
+};
+
+// Shared Chart.js tooltip styling — frosted, theme-aware.
+const glassTooltip = (dark: boolean) => ({
+    backgroundColor: dark ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.95)',
+    titleColor: dark ? '#f1f5f9' : '#0f172a',
+    bodyColor: dark ? '#cbd5e1' : '#334155',
+    borderColor: dark ? 'rgba(148,163,184,0.25)' : 'rgba(148,163,184,0.35)',
+    borderWidth: 1,
+    padding: 12,
+    cornerRadius: 12,
+    displayColors: false,
+    titleFont: { family: "'Inter', sans-serif", weight: '600', size: 13 },
+    bodyFont: { family: "'Inter', sans-serif", weight: '500', size: 12 },
+});
+
+// Build a vertical linear gradient between two colours for chart fills.
+const vGradient = (ctx: CanvasRenderingContext2D, area: any, from: string, to: string) => {
+    if (!area) return from;
+    const g = ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    g.addColorStop(0, from);
+    g.addColorStop(1, to);
+    return g;
+};
+
+// Doughnut centre label plugin (renders the match % in the hole).
+const centerTextPlugin = {
+    id: 'centerText',
+    afterDraw(chart: any) {
+        const opts = chart.config?.options?.plugins?.centerText;
+        if (!opts || opts.text == null) return;
+        const { ctx, chartArea } = chart;
+        if (!chartArea) return;
+        const cx = (chartArea.left + chartArea.right) / 2;
+        const cy = (chartArea.top + chartArea.bottom) / 2;
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = opts.color || '#0f172a';
+        ctx.font = `800 ${opts.size || 30}px 'Inter', sans-serif`;
+        ctx.fillText(String(opts.text), cx, cy - 7);
+        if (opts.sub) {
+            ctx.font = `600 12px 'Inter', sans-serif`;
+            ctx.fillStyle = opts.subColor || '#64748b';
+            ctx.fillText(opts.sub, cx, cy + 15);
+        }
+        ctx.restore();
+    },
+};
+
 // --- Sidebar ---
 interface SidebarProps {
     activeTab: Tab;
@@ -315,18 +404,24 @@ interface KpiCardProps {
     accent: string;
     icon: React.ReactNode;
 }
-const KpiCard: React.FC<KpiCardProps> = ({ label, value, accent, icon }) => (
-    <div className="kpi-card glass-card p-6 flex items-start justify-between gap-3">
-        <div>
-            <h3 className="text-gray-500 text-xs font-semibold uppercase tracking-wide">{label}</h3>
-            <p className="text-3xl font-extrabold mt-2 text-gray-900">{value}</p>
+const KpiCard: React.FC<KpiCardProps> = ({ label, value, accent, icon }) => {
+    const numeric = typeof value === 'number';
+    const counted = useCountUp(numeric ? value : 0);
+    return (
+        <div className="kpi-card glass-card p-6 flex items-start justify-between gap-3 overflow-hidden relative">
+            <span className="absolute -top-8 -right-8 w-24 h-24 rounded-full blur-2xl opacity-40 pointer-events-none"
+                  style={{ background: accent }} aria-hidden="true"></span>
+            <div className="relative">
+                <h3 className="text-gray-500 text-xs font-semibold uppercase tracking-wide">{label}</h3>
+                <p className="text-3xl font-extrabold mt-2 text-gray-900 tabular-nums">{numeric ? counted : value}</p>
+            </div>
+            <span className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 relative"
+                  style={{ background: `${accent}1f`, color: accent }}>
+                <Icon path={icon} className="w-5 h-5" />
+            </span>
         </div>
-        <span className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-              style={{ background: `${accent}1f`, color: accent }}>
-            <Icon path={icon} className="w-5 h-5" />
-        </span>
-    </div>
-);
+    );
+};
 
 interface DashboardSectionProps {
     people: Person[];
@@ -341,6 +436,7 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
     const chartInstanceRef = useRef<any>(null);
     const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>('jobs');
     const [isLoadingChart, setIsLoadingChart] = useState(false);
+    const themeTick = useThemeTick();
 
     const getSkillById = (id: number) => skills.find(s => s.id === id);
 
@@ -394,7 +490,23 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
         if (chartInstanceRef.current) {
             chartInstanceRef.current.destroy();
         }
-        
+
+        const dark = isDarkTheme();
+        const tickColor = cssVar('--text-muted', '#64748b');
+        const emptyCell = dark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.12)';
+        // Three-stop heat ramp: light blue -> blue -> indigo.
+        const ramp: [number, number, number][] = [[191, 219, 254], [96, 165, 250], [79, 70, 229]];
+        const heatColor = (ratio: number) => {
+            const r = Math.max(0, Math.min(1, ratio));
+            const seg = r <= 0.5 ? 0 : 1;
+            const t = r <= 0.5 ? r / 0.5 : (r - 0.5) / 0.5;
+            const a = ramp[seg], b = ramp[seg + 1];
+            const mix = (i: number) => Math.round(a[i] + (b[i] - a[i]) * t);
+            return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
+        };
+
+        if (typeof Chart !== 'undefined' && Chart.defaults) Chart.defaults.font.family = "'Inter', sans-serif";
+
         if (ctx) {
             chartInstanceRef.current = new Chart(ctx, {
                 type: 'matrix',
@@ -404,26 +516,43 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
                         data: chartData,
                         backgroundColor: (c: any) => {
                             const value = c.dataset.data[c.dataIndex]?.v;
-                            if (value === undefined) return 'rgba(243, 244, 246, 1)';
-                            const alpha = value / maxCount;
-                            return `rgba(74, 144, 226, ${alpha * 0.8 + 0.2})`;
+                            if (value === undefined) return emptyCell;
+                            return heatColor(value / maxCount);
                         },
-                        borderColor: 'rgba(255, 255, 255, 0.5)',
-                        borderWidth: 1,
-                        width: ({chart}: any) => (chart.chartArea || {}).width / xLabels.length - 1,
-                        height: ({chart}: any) => (chart.chartArea || {}).height / yLabels.length - 1,
+                        hoverBackgroundColor: (c: any) => {
+                            const value = c.dataset.data[c.dataIndex]?.v;
+                            if (value === undefined) return emptyCell;
+                            return heatColor(Math.min(1, value / maxCount + 0.25));
+                        },
+                        borderColor: dark ? 'rgba(15,23,42,0.6)' : 'rgba(255,255,255,0.75)',
+                        borderWidth: 2,
+                        borderRadius: 6,
+                        hoverBorderColor: cssVar('--accent', '#4A90E2'),
+                        hoverBorderWidth: 2,
+                        width: ({chart}: any) => (chart.chartArea || {}).width / xLabels.length - 5,
+                        height: ({chart}: any) => (chart.chartArea || {}).height / yLabels.length - 5,
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { title: () => '', label: (c: any) => { const item = c.dataset.data[c.dataIndex]; return [`Skill: ${item.y}`, `${heatmapMode === 'jobs' ? 'Job' : 'Department'}: ${item.x}`, `Count: ${item.v}`]; } } } },
-                    scales: { x: { type: 'category', labels: xLabels, ticks: { autoSkip: false, maxRotation: 90, minRotation: 45 } }, y: { type: 'category', labels: yLabels, offset: true } }
+                    animation: { duration: 700, easing: 'easeOutQuart' },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            ...glassTooltip(dark),
+                            callbacks: { title: () => '', label: (c: any) => { const item = c.dataset.data[c.dataIndex]; return [`Skill: ${item.y}`, `${heatmapMode === 'jobs' ? 'Job' : 'Department'}: ${item.x}`, `Count: ${item.v}`]; } }
+                        }
+                    },
+                    scales: {
+                        x: { type: 'category', labels: xLabels, offset: true, grid: { display: false }, border: { display: false }, ticks: { color: tickColor, autoSkip: false, maxRotation: 90, minRotation: 45 } },
+                        y: { type: 'category', labels: yLabels, offset: true, grid: { display: false }, border: { display: false }, ticks: { color: tickColor } }
+                    }
                 }
             });
         }
         setIsLoadingChart(false);
-    }, [heatmapMode, people, skills]);
+    }, [heatmapMode, people, skills, themeTick]);
 
     useEffect(() => {
         const timer = setTimeout(() => updateHeatmap(), 100);
@@ -487,9 +616,9 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
                 <div className="glass-card p-6">
                     <h3 className="text-xl font-semibold mb-4">Quick Actions</h3>
                     <div className="space-y-4">
-                        <button onClick={() => onSwitchTab('occupations')} className="w-full text-left p-4 rounded-lg bg-blue-50 hover:bg-blue-100 transition"><h4 className="font-semibold text-blue-800">📄 View Occupations</h4><p className="text-sm text-blue-700">Explore official occupation profiles.</p></button>
-                        <button onClick={() => onSwitchTab('analysis')} className="w-full text-left p-4 rounded-lg bg-green-50 hover:bg-green-100 transition"><h4 className="font-semibold text-green-800">🔍 Run a Skill Gap Analysis</h4><p className="text-sm text-green-700">Compare an employee to an occupation.</p></button>
-                        <button onClick={() => onSwitchTab('development')} className="w-full text-left p-4 rounded-lg bg-purple-50 hover:bg-purple-100 transition"><h4 className="font-semibold text-purple-800">🎓 View Learning Paths</h4><p className="text-sm text-purple-700">Track employee development plans.</p></button>
+                        <button onClick={() => onSwitchTab('occupations')} className="hover-slide w-full text-left p-4 rounded-xl bg-blue-50 hover:bg-blue-100"><h4 className="font-semibold text-blue-800">📄 View Occupations</h4><p className="text-sm text-blue-700">Explore official occupation profiles.</p></button>
+                        <button onClick={() => onSwitchTab('analysis')} className="hover-slide w-full text-left p-4 rounded-xl bg-green-50 hover:bg-green-100"><h4 className="font-semibold text-green-800">🔍 Run a Skill Gap Analysis</h4><p className="text-sm text-green-700">Compare an employee to an occupation.</p></button>
+                        <button onClick={() => onSwitchTab('development')} className="hover-slide w-full text-left p-4 rounded-xl bg-purple-50 hover:bg-purple-100"><h4 className="font-semibold text-purple-800">🎓 View Learning Paths</h4><p className="text-sm text-purple-700">Track employee development plans.</p></button>
                         <RecommendedCourse />
                     </div>
                 </div>
@@ -559,7 +688,7 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, skills, occupatio
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{person.department}</td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center">
-                                                <div className="w-full bg-gray-200 rounded-full h-4 mr-2"><div className="bg-blue-500 h-4 rounded-full" style={{width: `${matchPercentage}%`}}></div></div>
+                                                <div className="progress-track w-full h-3 mr-2"><div className="progress-fill" style={{width: `${matchPercentage}%`}}></div></div>
                                                 <span className="text-sm text-gray-600 w-10 text-right">{Math.round(matchPercentage)}%</span>
                                             </div>
                                         </td>
@@ -596,7 +725,7 @@ const PersonDetailModal: React.FC<PersonDetailModalProps> = ({ person, onClose, 
                 <ul className="mt-2 space-y-2">
                     {person.skills.map(s => {
                         const skillInfo = getSkillById(s.id);
-                        return skillInfo ? <li key={s.id} className="flex justify-between items-center text-sm"><span>{skillInfo.name}</span><div className="flex items-center"><div className="w-24 bg-gray-200 rounded-full h-2.5 mr-2"><div className="bg-blue-500 h-2.5 rounded-full" style={{width: `${s.level * 20}%`}}></div></div><span className="font-mono text-xs">{s.level}/5</span></div></li> : null;
+                        return skillInfo ? <li key={s.id} className="flex justify-between items-center text-sm"><span>{skillInfo.name}</span><div className="flex items-center"><div className="progress-track w-24 h-2.5 mr-2"><div className="progress-fill" style={{width: `${s.level * 20}%`}}></div></div><span className="font-mono text-xs">{s.level}/5</span></div></li> : null;
                     })}
                 </ul>
             </div>
@@ -1143,6 +1272,7 @@ const AnalysisSection: React.FC<AnalysisSectionProps> = ({ people, occupations, 
 
     const chartRef = useRef<HTMLCanvasElement>(null);
     const chartInstanceRef = useRef<any>(null);
+    const themeTick = useThemeTick();
 
     const getSkillById = (id: number) => skills.find(s => s.id === id);
 
@@ -1169,14 +1299,55 @@ const AnalysisSection: React.FC<AnalysisSectionProps> = ({ people, occupations, 
             const ctx = chartRef.current.getContext('2d');
             if (chartInstanceRef.current) chartInstanceRef.current.destroy();
             if (ctx) {
+                const dark = isDarkTheme();
+                const total = analysisResult.occupation.skills.length;
+                const matches = analysisResult.matchingSkills.length;
+                const gaps = analysisResult.gapSkills.length;
+                const pct = total > 0 ? Math.round((matches / total) * 100) : 100;
+                if (typeof Chart !== 'undefined' && Chart.defaults) Chart.defaults.font.family = "'Inter', sans-serif";
                 chartInstanceRef.current = new Chart(ctx, {
                     type: 'doughnut',
-                    data: { labels: ['Matching Skills', 'Skill Gaps'], datasets: [{ data: [analysisResult.matchingSkills.length, analysisResult.gapSkills.length], backgroundColor: ['#22c55e', '#ef4444'], borderColor: '#ffffff', borderWidth: 2 }] },
-                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, cutout: '70%' }
+                    data: {
+                        labels: ['Matching Skills', 'Skill Gaps'],
+                        datasets: [{
+                            data: [matches, gaps],
+                            backgroundColor: (c: any) => {
+                                const { chart, dataIndex } = c;
+                                const { ctx: cx, chartArea } = chart;
+                                if (!chartArea) return dataIndex === 0 ? '#10b981' : '#f43f5e';
+                                return dataIndex === 0
+                                    ? vGradient(cx, chartArea, '#34d399', '#059669')
+                                    : vGradient(cx, chartArea, '#fb7185', '#e11d48');
+                            },
+                            borderColor: 'transparent',
+                            borderWidth: 0,
+                            borderRadius: 8,
+                            spacing: matches > 0 && gaps > 0 ? 3 : 0,
+                            hoverOffset: 10,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        cutout: '72%',
+                        animation: { animateRotate: true, animateScale: true, duration: 900, easing: 'easeOutQuart' },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: glassTooltip(dark),
+                            centerText: {
+                                text: `${pct}%`,
+                                sub: 'match',
+                                color: cssVar('--text-strong', dark ? '#f1f5f9' : '#0f172a'),
+                                subColor: cssVar('--text-muted', '#64748b'),
+                                size: 34,
+                            },
+                        } as any
+                    },
+                    plugins: [centerTextPlugin]
                 });
             }
         }
-    }, [analysisResult]);
+    }, [analysisResult, themeTick]);
 
     const handleGeneratePlan = async () => {
         if (!analysisResult) return;
