@@ -139,80 +139,194 @@ const App: React.FC = () => {
     if (isLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
-                <Loader />
+                <div className="glass-card p-10 flex flex-col items-center gap-4">
+                    <div className="loader"></div>
+                    <p className="text-sm text-gray-500">Loading your skills intelligence…</p>
+                </div>
             </div>
         );
     }
-    
-    return (
-        <div id="app" className="min-h-screen flex flex-col">
-            <Header activeTab={activeTab} onSwitchTab={handleSwitchTab} />
 
-            <main className="flex-grow container mx-auto p-4 sm:p-6 lg:px-8">
-                {activeTab === 'dashboard' && <DashboardSection people={people} skills={skills} occupations={occupations} learningPaths={learningPaths} courses={courses} onSwitchTab={handleSwitchTab} />}
-                {activeTab === 'people' && <PeopleSection people={people} skills={skills} occupations={occupations} courses={courses} />}
-                {activeTab === 'occupations' && <OccupationsSection occupations={occupations} skills={skills} onAddOccupation={addNewOccupation} onAddNewSkills={addNewSkills} showToast={showToast} people={people} courses={courses} />}
-                {activeTab === 'projects' && <ProjectsSection people={people} skills={skills} showToast={showToast} setProjectAnalysis={setProjectAnalysis} />}
-                {activeTab === 'development' && <DevelopmentSection learningPaths={learningPaths} people={people} skills={skills} setLearningPaths={setLearningPaths} onSkillUpdate={handlePersonSkillUpdate} />}
-                {activeTab === 'analysis' && <AnalysisSection people={people} occupations={occupations} skills={skills} onAssignCourse={handleAssignCourse} />}
-                {activeTab === 'reports' && <ReportsSection people={people} departments={departments} showToast={showToast} />}
-            </main>
+    const activeLabel = TAB_META.find(t => t.id === activeTab)?.label ?? 'Dashboard';
+
+    return (
+        <div id="app" className="min-h-screen md:flex">
+            <Sidebar activeTab={activeTab} onSwitchTab={handleSwitchTab} />
+
+            <div className="flex-1 min-w-0 flex flex-col">
+                <TopBar activeLabel={activeLabel} activeTab={activeTab} onSwitchTab={handleSwitchTab} />
+
+                <main className="flex-grow w-full max-w-[1500px] mx-auto p-4 sm:p-6 lg:px-8">
+                    <div key={activeTab} className="fade-in">
+                        {activeTab === 'dashboard' && <DashboardSection people={people} skills={skills} occupations={occupations} learningPaths={learningPaths} courses={courses} onSwitchTab={handleSwitchTab} />}
+                        {activeTab === 'people' && <PeopleSection people={people} skills={skills} occupations={occupations} courses={courses} />}
+                        {activeTab === 'occupations' && <OccupationsSection occupations={occupations} skills={skills} onAddOccupation={addNewOccupation} onAddNewSkills={addNewSkills} showToast={showToast} people={people} courses={courses} />}
+                        {activeTab === 'projects' && <ProjectsSection people={people} skills={skills} showToast={showToast} setProjectAnalysis={setProjectAnalysis} />}
+                        {activeTab === 'development' && <DevelopmentSection learningPaths={learningPaths} people={people} skills={skills} setLearningPaths={setLearningPaths} onSkillUpdate={handlePersonSkillUpdate} />}
+                        {activeTab === 'analysis' && <AnalysisSection people={people} occupations={occupations} skills={skills} onAssignCourse={handleAssignCourse} />}
+                        {activeTab === 'reports' && <ReportsSection people={people} departments={departments} showToast={showToast} />}
+                    </div>
+                </main>
+            </div>
 
             {projectAnalysis && <ProjectAnalysisResultModal result={projectAnalysis} onClose={() => setProjectAnalysis(null)} />}
 
-            <div id="toast" className={`fixed bottom-5 right-5 bg-gray-800 text-white py-2 px-4 rounded-lg shadow-lg transition-opacity duration-300 ${toast.visible ? 'opacity-100' : 'opacity-0'}`}>
-                <p id="toast-message">{toast.message}</p>
+            <div id="toast" className={`fixed bottom-5 right-5 z-[60] glass-strong text-gray-800 py-3 px-5 rounded-2xl shadow-lg transition-all duration-300 ${toast.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}>
+                <p id="toast-message" className="text-sm font-medium">{toast.message}</p>
             </div>
         </div>
     );
 };
 
-// --- Header Component ---
-interface HeaderProps {
+// --- Navigation metadata & icons ---
+type IconProps = { className?: string };
+const Icon: React.FC<{ path: React.ReactNode } & IconProps> = ({ path, className }) => (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{path}</svg>
+);
+
+const TabIcons: Record<Tab, React.ReactNode> = {
+    dashboard: <><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></>,
+    people: <><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/></>,
+    occupations: <><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></>,
+    projects: <><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2 0-2.8a2 2 0 0 0-3 0Z"/><path d="M12 15 9 12a11 11 0 0 1 8-9c2 0 3 1 3 3a11 11 0 0 1-9 8Z"/><path d="M15 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"/></>,
+    development: <><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1 2.5 3 6 3s6-2 6-3v-5"/></>,
+    analysis: <><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></>,
+    reports: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></>,
+};
+
+const TAB_META: { id: Tab; label: string }[] = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'people', label: 'People' },
+    { id: 'occupations', label: 'Occupations' },
+    { id: 'projects', label: 'Projects' },
+    { id: 'development', label: 'Development' },
+    { id: 'analysis', label: 'Analysis' },
+    { id: 'reports', label: 'Reports' },
+];
+
+// --- Dark mode hook ---
+const useDarkMode = (): [boolean, () => void] => {
+    const [dark, setDark] = useState<boolean>(() => {
+        if (typeof window === 'undefined') return false;
+        const stored = window.localStorage.getItem('bsi-theme');
+        if (stored) return stored === 'dark';
+        return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+    });
+    useEffect(() => {
+        const root = document.documentElement;
+        root.classList.toggle('dark', dark);
+        window.localStorage.setItem('bsi-theme', dark ? 'dark' : 'light');
+    }, [dark]);
+    return [dark, () => setDark(d => !d)];
+};
+
+// --- Sidebar ---
+interface SidebarProps {
     activeTab: Tab;
     onSwitchTab: (tab: Tab) => void;
 }
-const Header: React.FC<HeaderProps> = ({ activeTab, onSwitchTab }) => {
-    const tabs: { id: Tab; label: string }[] = [
-        { id: 'dashboard', label: 'Dashboard' },
-        { id: 'people', label: 'People' },
-        { id: 'occupations', label: 'Occupations' },
-        { id: 'projects', label: 'Projects' },
-        { id: 'development', label: 'Development' },
-        { id: 'analysis', label: 'Analysis' },
-        { id: 'reports', label: 'Reports' }
-    ];
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSwitchTab }) => (
+    <aside className="hidden md:flex flex-col items-center gap-2 w-[84px] shrink-0 glass-sidebar sticky top-0 h-screen py-5 px-2 z-40">
+        <div className="w-11 h-11 mb-3 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shrink-0"
+             style={{ background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%)', boxShadow: '0 10px 22px -8px rgba(74,144,226,0.8)' }}>
+            B
+        </div>
+        <nav className="flex flex-col gap-1.5 w-full overflow-y-auto">
+            {TAB_META.map(tab => (
+                <button
+                    key={tab.id}
+                    onClick={() => onSwitchTab(tab.id)}
+                    aria-current={activeTab === tab.id}
+                    className={`side-link ${activeTab === tab.id ? 'active' : ''}`}
+                    title={tab.label}
+                >
+                    <Icon path={TabIcons[tab.id]} className="w-[22px] h-[22px]" />
+                    <span>{tab.label}</span>
+                </button>
+            ))}
+        </nav>
+    </aside>
+);
 
+// --- Top bar ---
+interface TopBarProps {
+    activeLabel: string;
+    activeTab: Tab;
+    onSwitchTab: (tab: Tab) => void;
+}
+const TopBar: React.FC<TopBarProps> = ({ activeLabel, activeTab, onSwitchTab }) => {
+    const [dark, toggleDark] = useDarkMode();
     return (
-         <header className="bg-white shadow-sm sticky top-0 z-40">
-            <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center py-4">
-                    <div className="flex items-center space-x-2">
-                        <span className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-lg">B</span>
-                        <h1 className="text-2xl font-bold text-gray-800">Skills Intelligence</h1>
+        <header className="glass-topbar sticky top-0 z-30">
+            <div className="w-full max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between items-center gap-3 py-3.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <span className="md:hidden w-9 h-9 rounded-xl flex items-center justify-center text-white font-extrabold text-lg shrink-0"
+                              style={{ background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%)' }}>B</span>
+                        <div className="flex items-baseline gap-2 min-w-0">
+                            <h1 className="text-lg sm:text-xl font-bold text-gray-800 truncate">Skills Intelligence</h1>
+                            <span className="hidden sm:inline text-gray-400">/</span>
+                            <span className="hidden sm:inline text-sm font-semibold text-gray-500 truncate">{activeLabel}</span>
+                        </div>
                     </div>
-                    <nav className="hidden md:flex border-b-2 border-transparent">
-                        {tabs.map(tab => (
-                            <button
-                                key={tab.id}
-                                onClick={() => onSwitchTab(tab.id)}
-                                className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === tab.id ? 'nav-active' : 'nav-inactive'}`}
-                            >
-                                {tab.label}
-                            </button>
-                        ))}
-                    </nav>
-                     <div className="flex items-center">
-                        <span className="hidden sm:inline text-sm text-gray-500 mr-3">Welcome, HR Manager</span>
-                        <img src="https://placehold.co/40x40/4A90E2/FFFFFF?text=HR" alt="User Avatar" className="w-10 h-10 rounded-full" />
+                    <div className="flex items-center gap-2 sm:gap-3">
+                        <span className="glass-chip hidden sm:inline-flex">
+                            <span className="w-2 h-2 rounded-full" style={{ background: 'var(--accent)' }}></span>
+                            AI Ready
+                        </span>
+                        <button onClick={toggleDark} className="icon-btn" aria-label="Toggle dark mode" title="Toggle theme">
+                            {dark
+                                ? <Icon path={<><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>} className="w-5 h-5" />
+                                : <Icon path={<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>} className="w-5 h-5" />}
+                        </button>
+                        <button className="icon-btn" aria-label="Notifications" title="Notifications">
+                            <Icon path={<><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></>} className="w-5 h-5" />
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">3</span>
+                        </button>
+                        <div className="flex items-center gap-2 pl-1">
+                            <span className="hidden lg:inline text-sm text-gray-500">HR Manager</span>
+                            <img src="https://placehold.co/40x40/4A90E2/FFFFFF?text=HR" alt="User Avatar" className="w-9 h-9 rounded-full ring-2 ring-white/60" />
+                        </div>
                     </div>
                 </div>
+                {/* Mobile pill navigation */}
+                <nav className="md:hidden flex gap-2 overflow-x-auto pb-3 -mx-1 px-1">
+                    {TAB_META.map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => onSwitchTab(tab.id)}
+                            className={`pill-link ${activeTab === tab.id ? 'active' : ''}`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </nav>
             </div>
         </header>
     );
 };
 
 // --- Section Components ---
+
+// --- KPI card ---
+interface KpiCardProps {
+    label: string;
+    value: number | string;
+    accent: string;
+    icon: React.ReactNode;
+}
+const KpiCard: React.FC<KpiCardProps> = ({ label, value, accent, icon }) => (
+    <div className="kpi-card glass-card p-6 flex items-start justify-between gap-3">
+        <div>
+            <h3 className="text-gray-500 text-xs font-semibold uppercase tracking-wide">{label}</h3>
+            <p className="text-3xl font-extrabold mt-2 text-gray-900">{value}</p>
+        </div>
+        <span className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: `${accent}1f`, color: accent }}>
+            <Icon path={icon} className="w-5 h-5" />
+        </span>
+    </div>
+);
 
 interface DashboardSectionProps {
     people: Person[];
@@ -353,13 +467,13 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
                 <p className="mt-1 text-gray-600">This section provides a high-level overview of your organization's skills landscape and quick access to key functions.</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <div className="kpi-card bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-500"><h3 className="text-gray-500 text-sm font-medium">Total Employees</h3><p className="text-3xl font-bold mt-2">{people.length}</p></div>
-                <div className="kpi-card bg-white p-6 rounded-lg shadow-md border-l-4 border-green-500"><h3 className="text-gray-500 text-sm font-medium">Total Skills Identified</h3><p className="text-3xl font-bold mt-2">{skills.length}</p></div>
-                <div className="kpi-card bg-white p-6 rounded-lg shadow-md border-l-4 border-yellow-500"><h3 className="text-gray-500 text-sm font-medium">Occupations Loaded</h3><p className="text-3xl font-bold mt-2">{occupations.length}</p></div>
-                <div className="kpi-card bg-white p-6 rounded-lg shadow-md border-l-4 border-purple-500"><h3 className="text-gray-500 text-sm font-medium">Active Learning Paths</h3><p className="text-3xl font-bold mt-2">{Object.keys(learningPaths).length}</p></div>
+                <KpiCard label="Total Employees" value={people.length} accent="#3b82f6" icon={<><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/></>} />
+                <KpiCard label="Total Skills Identified" value={skills.length} accent="#22c55e" icon={<><path d="m12 3 2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5L12 3Z"/></>} />
+                <KpiCard label="Occupations Loaded" value={occupations.length} accent="#eab308" icon={<><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></>} />
+                <KpiCard label="Active Learning Paths" value={Object.keys(learningPaths).length} accent="#a855f7" icon={<><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1 2.5 3 6 3s6-2 6-3v-5"/></>} />
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-md relative">
+                <div className="lg:col-span-2 glass-card p-6 relative">
                     {isLoadingChart && <Loader />}
                     <div className="flex flex-col sm:flex-row justify-between items-center mb-4">
                         <div><h3 className="text-xl font-semibold">Skills Heat Map</h3><p className="text-sm text-gray-600">Visualize skill density across jobs or departments.</p></div>
@@ -370,7 +484,7 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
                     </div>
                     <div className="chart-container h-[450px]"><canvas ref={chartRef}></canvas></div>
                 </div>
-                <div className="bg-white p-6 rounded-lg shadow-md">
+                <div className="glass-card p-6">
                     <h3 className="text-xl font-semibold mb-4">Quick Actions</h3>
                     <div className="space-y-4">
                         <button onClick={() => onSwitchTab('occupations')} className="w-full text-left p-4 rounded-lg bg-blue-50 hover:bg-blue-100 transition"><h4 className="font-semibold text-blue-800">📄 View Occupations</h4><p className="text-sm text-blue-700">Explore official occupation profiles.</p></button>
@@ -411,7 +525,7 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, skills, occupatio
                 <h2 className="text-3xl font-bold text-gray-900">People</h2>
                 <p className="mt-1 text-gray-600">Explore employee profiles, view their skills, and plan their career development paths.</p>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="glass-card p-6">
                 <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
                     <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search by name or email..." className="w-full sm:w-1/2 pl-4 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     <div className="flex w-full sm:w-auto gap-4">
@@ -429,7 +543,7 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, skills, occupatio
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Skill Match</th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody className="divide-y divide-gray-200">
                             {filteredPeople.map(person => {
                                 const occupation = occupations.find(o => o.title === person.job);
                                 let matchPercentage = 0;
@@ -665,7 +779,7 @@ const OccupationsSection: React.FC<OccupationsSectionProps> = ({ occupations, sk
             <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Occupations & Job Descriptions</h2><p className="mt-1 text-gray-600">Manage company roles, analyze job descriptions with AI, and run strategic "Build vs. Buy" talent analysis.</p></div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="md:col-span-1 space-y-8">
-                    <div className="bg-white p-6 rounded-lg shadow-md">
+                    <div className="glass-card p-6">
                         <h3 className="text-xl font-semibold mb-4">Upload Job Description</h3>
                         {!isUploading ? (
                         <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
@@ -684,14 +798,14 @@ const OccupationsSection: React.FC<OccupationsSectionProps> = ({ occupations, sk
                         )}
                     </div>
                 </div>
-                <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md relative">
+                <div className="md:col-span-2 glass-card p-6 relative">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-xl font-semibold">Current Roles</h3>
                         <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search roles..." className="w-1/2 pl-4 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div className="space-y-3 max-h-[60vh] overflow-y-auto">
                         {filteredOccupations.map(occ => (
-                            <div key={occ.id} className="border p-4 rounded-lg">
+                            <div key={occ.id} className="glass-soft p-4">
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <h4 className="font-semibold text-gray-800">{occ.title}</h4>
@@ -821,7 +935,7 @@ const GeminiAnalysisModal: React.FC<GeminiAnalysisModalProps> = ({ result, onClo
             <p className="mb-4 text-gray-600">Skills extracted for: <strong>{result.title}</strong>. Select the skills to add to this new role.</p>
             <div className="space-y-4 max-h-[60vh] overflow-y-auto">
                 {result.categories.map((cat, index) => (
-                    <div key={index} className="border rounded-lg p-4">
+                    <div key={index} className="glass-soft p-4">
                         <h3 className="text-lg font-semibold text-blue-800 mb-2">{cat.category}</h3>
                         <ul className="space-y-1">
                             {cat.skills.map(skill => (
@@ -928,7 +1042,7 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({ people, skills, showT
                 <h2 className="text-3xl font-bold text-gray-900">Project Resource Planning</h2>
                 <p className="mt-1 text-gray-600">Upload a project brief to let AI analyze its skill requirements, measure them against your current workforce, and identify hiring gaps.</p>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="glass-card p-6">
                 <h3 className="text-xl font-semibold mb-4">Analyze New Project</h3>
                 {!isUploading ? (
                     <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-10 text-center">
@@ -976,7 +1090,7 @@ const ProjectAnalysisResultModal: React.FC<ProjectAnalysisResultModalProps> = ({
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Gap / Surplus</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
+                    <tbody className="divide-y divide-gray-200">
                         {result.map(res => (
                             <tr key={res.skill}>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{res.skill}</td>
@@ -1084,7 +1198,7 @@ const AnalysisSection: React.FC<AnalysisSectionProps> = ({ people, occupations, 
     return (
         <section>
             <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Skills Analysis</h2><p className="mt-1 text-gray-600">Perform a detailed skills gap analysis, generate an AI learning plan, and find microcredentials to close gaps.</p></div>
-            <div className="bg-white p-6 rounded-lg shadow-md relative">
+            <div className="glass-card p-6 relative">
                 <h3 className="text-xl font-semibold mb-4">Skills Gap Analysis</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                     <div>
@@ -1139,7 +1253,7 @@ const CourseFinderModal: React.FC<CourseFinderModalProps> = ({ skill, person, on
             <p className="mb-4 text-gray-600">Top courses from the marketplace for the skill: <strong>{skill.name}</strong></p>
             <div className="space-y-3">
                 {relevantCourses.length > 0 ? relevantCourses.map(course => (
-                    <div key={course.id} className="p-4 border rounded-lg flex justify-between items-center">
+                    <div key={course.id} className="glass-soft p-4 flex justify-between items-center">
                         <div>
                             <a href={course.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 hover:underline">{course.title}</a>
                             <p className="text-sm text-gray-500">{course.provider} - ${course.cost}</p>
@@ -1201,7 +1315,7 @@ const DevelopmentSection: React.FC<DevelopmentSectionProps> = ({ learningPaths, 
     return (
         <section>
             <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Learning & Development</h2><p className="mt-1 text-gray-600">Track employee development plans and assigned microcredentials. Completed courses automatically update employee skill profiles.</p></div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="glass-card p-6">
                 {Object.keys(learningPaths).length > 0 ? (
                     <div className="space-y-6">
                         {Object.keys(learningPaths).map(personIdStr => {
@@ -1216,7 +1330,7 @@ const DevelopmentSection: React.FC<DevelopmentSectionProps> = ({ learningPaths, 
                                     <h3 className="font-semibold text-xl">{person.name}'s Learning Path</h3>
                                     <ul className="mt-2 space-y-2">
                                         {path.skills.map(s => (
-                                            <li key={s.skillId} className="p-3 border rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center">
+                                            <li key={s.skillId} className="glass-soft p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center">
                                                 <div>
                                                     <p className="font-semibold">{getSkillName(s.skillId)}</p>
                                                     <a href="#" className="text-sm text-blue-600 hover:underline">{s.courseName || 'Course details not available'}</a>
@@ -1264,7 +1378,7 @@ const ReportsSection: React.FC<ReportsSectionProps> = ({ people, departments, sh
     return (
         <section>
              <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Reports & Exports</h2><p className="mt-1 text-gray-600">Generate and export skills data for compliance, reporting, or integration with other systems in 1EdTech LER format.</p></div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="glass-card p-6">
                  <h3 className="text-xl font-semibold mb-4">Export Skills & Competency Map</h3>
                  <div className="space-y-4 max-w-lg">
                     <div>
