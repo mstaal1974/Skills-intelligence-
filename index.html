@@ -317,9 +317,13 @@
             background: rgba(15, 23, 42, 0.45);
             -webkit-backdrop-filter: blur(6px);
             backdrop-filter: blur(6px);
-            display: flex; align-items: center; justify-content: center;
+            /* Overlay is the scroll container; margin:auto on the child centres it
+               when it fits and lets it scroll (never clip) when it is taller. */
+            display: flex;
+            overflow-y: auto;
+            overscroll-behavior: contain;
             z-index: 50; opacity: 0; pointer-events: none; transition: opacity .3s ease;
-            padding: 1rem;
+            padding: clamp(0.75rem, 4vh, 2.5rem) clamp(0.75rem, 4vw, 1.5rem);
         }
         .modal-overlay.active { opacity: 1; pointer-events: auto; }
         .modal-content {
@@ -328,10 +332,13 @@
             backdrop-filter: blur(26px) saturate(160%);
             border: 1px solid var(--glass-border);
             color: var(--text);
-            padding: 2rem; border-radius: 1.25rem;
-            max-width: 90vw; max-height: 90vh; overflow-y: auto;
+            padding: clamp(1.25rem, 3vw, 2rem);
+            border-radius: 1.25rem;
+            width: 100%;
+            margin: auto;               /* centres when it fits, top-aligns + scrolls when tall */
             box-shadow: var(--glass-shadow-lg);
-            transform: scale(0.95) translateY(8px); transition: transform .3s ease;
+            overflow-wrap: break-word;
+            transform: scale(0.96) translateY(8px); transition: transform .3s ease;
         }
         .modal-overlay.active .modal-content { transform: scale(1) translateY(0); }
 
@@ -392,6 +399,7 @@
 {
   "imports": {
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.0",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "react": "https://aistudiocdn.com/react@^19.2.0"

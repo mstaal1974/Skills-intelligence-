@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { Skill, RichSkill, Occupation, Person, LearningPaths, ToastState, Tab, HeatmapMode, GeminiSkillCategory, OccupationSkill, Course, PersonSkill, LearningPathSkill, LearningPath, ProjectSkillRequirement, ProjectAnalysisResult } from './types';
 import { getMockData, generateMockPeople } from './services/mockDataService';
 import { extractSkillsFromText, generateLearningPlan, analyzeProjectRequirements } from './services/geminiService';
@@ -26,14 +27,30 @@ interface ModalProps {
 }
 
 const Modal: React.FC<ModalProps> = ({ isOpen, onClose, children, maxWidth = 'max-w-4xl' }) => {
-    if (!isOpen) return null;
+    // Close on Escape and lock background scroll while a modal is open.
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', onKey);
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            document.body.style.overflow = prevOverflow;
+        };
+    }, [isOpen, onClose]);
 
-    return (
+    if (isOpen === false || typeof document === 'undefined') return null;
+
+    // Portal to <body> so the fixed overlay is never trapped by an ancestor's
+    // transform / backdrop-filter / overflow (e.g. a parent modal's content box).
+    return createPortal(
         <div className={`modal-overlay ${isOpen ? 'active' : ''}`} onClick={onClose}>
-            <div className={`modal-content w-full ${maxWidth}`} onClick={(e) => e.stopPropagation()}>
+            <div className={`modal-content ${maxWidth}`} onClick={(e) => e.stopPropagation()}>
                 {children}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 
