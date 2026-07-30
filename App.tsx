@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { Skill, RichSkill, Occupation, Person, LearningPaths, ToastState, Tab, HeatmapMode, GeminiSkillCategory, OccupationSkill, Course, PersonSkill, LearningPathSkill, LearningPath, ProjectSkillRequirement, ProjectAnalysisResult, BudgetStats, ProficiencyLevel } from './types';
 import { getMockData, generateMockPeople } from './services/mockDataService';
 import { extractSkillsFromText, generateLearningPlan, analyzeProjectRequirements } from './services/geminiService';
@@ -38,14 +39,276 @@ interface ModalProps {
 }
 
 const Modal: React.FC<ModalProps> = ({ isOpen, onClose, children, maxWidth = 'max-w-4xl' }) => {
-    if (!isOpen) return null;
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', onKey);
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+    }, [isOpen, onClose]);
 
-    return (
+    if (!isOpen || typeof document === 'undefined') return null;
+
+    // Portal to <body> so the fixed overlay is never trapped by an ancestor's
+    // transform / backdrop-filter / overflow (e.g. a parent modal's content).
+    return createPortal(
         <div className={`modal-overlay ${isOpen ? 'active' : ''}`} onClick={onClose}>
-            <div className={`modal-content w-full ${maxWidth}`} onClick={(e) => e.stopPropagation()}>
+            <div className={`modal-content ${maxWidth}`} onClick={(e) => e.stopPropagation()}>
                 {children}
             </div>
+        </div>,
+        document.body
+    );
+};
+
+// ============================================================================
+// Glassmorphic shell: icons, nav metadata, theme/chart helpers, shared pieces
+// ============================================================================
+type IconProps = { className?: string };
+const Icon: React.FC<{ path: React.ReactNode } & IconProps> = ({ path, className }) => (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{path}</svg>
+);
+
+const TabIcons: Record<Tab, React.ReactNode> = {
+    dashboard: <><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></>,
+    people: <><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/></>,
+    occupations: <><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></>,
+    projects: <><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2 0-2.8a2 2 0 0 0-3 0Z"/><path d="M12 15 9 12a11 11 0 0 1 8-9c2 0 3 1 3 3a11 11 0 0 1-9 8Z"/><path d="M15 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"/></>,
+    development: <><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1 2.5 3 6 3s6-2 6-3v-5"/></>,
+    analysis: <><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></>,
+    manager: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+    reports: <><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="12" y="6" width="3" height="11" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></>,
+    audit: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></>,
+};
+
+const TAB_META: { id: Tab; label: string }[] = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'people', label: 'People' },
+    { id: 'occupations', label: 'Occupations' },
+    { id: 'projects', label: 'Projects' },
+    { id: 'development', label: 'Development' },
+    { id: 'analysis', label: 'Analysis' },
+    { id: 'manager', label: 'Manager' },
+    { id: 'reports', label: 'Reports' },
+    { id: 'audit', label: 'Audit' },
+];
+
+const useDarkMode = (): [boolean, () => void] => {
+    const [dark, setDark] = useState<boolean>(() => {
+        if (typeof window === 'undefined') return false;
+        const stored = window.localStorage.getItem('bsi-theme');
+        if (stored) return stored === 'dark';
+        return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+    });
+    useEffect(() => {
+        document.documentElement.classList.toggle('dark', dark);
+        window.localStorage.setItem('bsi-theme', dark ? 'dark' : 'light');
+    }, [dark]);
+    return [dark, () => setDark(d => !d)];
+};
+
+const cssVar = (name: string, fallback: string): string => {
+    if (typeof window === 'undefined') return fallback;
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+};
+const isDarkTheme = () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+
+const useThemeTick = (): number => {
+    const [tick, setTick] = useState(0);
+    useEffect(() => {
+        const obs = new MutationObserver(() => setTick(t => t + 1));
+        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        return () => obs.disconnect();
+    }, []);
+    return tick;
+};
+
+const useCountUp = (target: number, duration = 900): number => {
+    const [val, setVal] = useState(0);
+    useEffect(() => {
+        if (typeof window === 'undefined') { setVal(target); return; }
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setVal(target); return; }
+        let raf = 0; const start = performance.now();
+        const step = (now: number) => {
+            const p = Math.min(1, (now - start) / duration);
+            setVal(Math.round(target * (1 - Math.pow(1 - p, 3))));
+            if (p < 1) raf = requestAnimationFrame(step);
+        };
+        raf = requestAnimationFrame(step);
+        return () => cancelAnimationFrame(raf);
+    }, [target, duration]);
+    return val;
+};
+
+const glassTooltip = (dark: boolean) => ({
+    backgroundColor: dark ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.95)',
+    titleColor: dark ? '#f1f5f9' : '#0f172a',
+    bodyColor: dark ? '#cbd5e1' : '#334155',
+    borderColor: dark ? 'rgba(148,163,184,0.25)' : 'rgba(148,163,184,0.35)',
+    borderWidth: 1, padding: 12, cornerRadius: 12, displayColors: false,
+    titleFont: { family: "'Inter', sans-serif", weight: '600', size: 13 },
+    bodyFont: { family: "'Inter', sans-serif", weight: '500', size: 12 },
+});
+
+const vGradient = (ctx: CanvasRenderingContext2D, area: any, from: string, to: string) => {
+    if (!area) return from;
+    const g = ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    g.addColorStop(0, from); g.addColorStop(1, to);
+    return g;
+};
+
+const centerTextPlugin = {
+    id: 'centerText',
+    afterDraw(chart: any) {
+        const opts = chart.config?.options?.plugins?.centerText;
+        if (!opts || opts.text == null) return;
+        const { ctx, chartArea } = chart;
+        if (!chartArea) return;
+        const cx = (chartArea.left + chartArea.right) / 2;
+        const cy = (chartArea.top + chartArea.bottom) / 2;
+        ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = opts.color || '#0f172a';
+        ctx.font = `800 ${opts.size || 30}px 'Inter', sans-serif`;
+        ctx.fillText(String(opts.text), cx, cy - 7);
+        if (opts.sub) { ctx.font = `600 12px 'Inter', sans-serif`; ctx.fillStyle = opts.subColor || '#64748b'; ctx.fillText(opts.sub, cx, cy + 15); }
+        ctx.restore();
+    },
+};
+
+// --- Formatted report renderer (light Markdown -> styled JSX) ---
+const renderInline = (text: string, keyBase: string): React.ReactNode[] => {
+    const nodes: React.ReactNode[] = [];
+    const regex = /(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`]+`)/g;
+    let last = 0; let m: RegExpExecArray | null; let k = 0;
+    while ((m = regex.exec(text)) !== null) {
+        if (m.index > last) nodes.push(text.slice(last, m.index));
+        const tok = m[0];
+        if (tok.startsWith('**')) nodes.push(<strong key={`${keyBase}-${k++}`} className="font-semibold text-gray-900">{tok.slice(2, -2)}</strong>);
+        else if (tok.startsWith('`')) nodes.push(<code key={`${keyBase}-${k++}`} className="px-1.5 py-0.5 rounded bg-black/5 text-[0.85em] font-mono">{tok.slice(1, -1)}</code>);
+        else nodes.push(<em key={`${keyBase}-${k++}`}>{tok.slice(1, -1)}</em>);
+        last = m.index + tok.length;
+    }
+    if (last < text.length) nodes.push(text.slice(last));
+    return nodes;
+};
+
+const FormattedReport: React.FC<{ text: string }> = ({ text }) => {
+    const lines = text.replace(/\r/g, '').split('\n');
+    const blocks: React.ReactNode[] = [];
+    const isHr = (t: string) => /^(-{3,}|\*{3,}|_{3,})$/.test(t);
+    const isBullet = (t: string) => /^[*-]\s+/.test(t);
+    const isNum = (t: string) => /^\d+[.)]\s+/.test(t);
+    const isHeading = (t: string) => /^#{1,6}\s+/.test(t);
+    let i = 0; let key = 0;
+    while (i < lines.length) {
+        const t = lines[i].trim();
+        if (t === '') { i++; continue; }
+        if (isHr(t)) { blocks.push(<hr key={key++} className="my-4 border-t border-black/10" />); i++; continue; }
+        const h = /^(#{1,6})\s+(.*)$/.exec(t);
+        if (h) {
+            const lvl = h[1].length;
+            const cls = lvl <= 1 ? 'text-xl font-bold text-gray-900 mt-2' : lvl === 2 ? 'text-lg font-bold text-gray-900 mt-2' : 'text-base font-semibold text-gray-900 mt-1';
+            blocks.push(<h4 key={key++} className={cls}>{renderInline(h[2], `h${key}`)}</h4>); i++; continue;
+        }
+        if (isBullet(t)) {
+            const items: string[] = [];
+            while (i < lines.length && isBullet(lines[i].trim())) { items.push(lines[i].trim().replace(/^[*-]\s+/, '')); i++; }
+            blocks.push(<ul key={key++} className="list-disc pl-5 space-y-1.5 marker:text-gray-400">{items.map((it, j) => <li key={j} className="pl-1">{renderInline(it, `b${key}-${j}`)}</li>)}</ul>);
+            continue;
+        }
+        if (isNum(t)) {
+            const items: string[] = [];
+            while (i < lines.length && isNum(lines[i].trim())) { items.push(lines[i].trim().replace(/^\d+[.)]\s+/, '')); i++; }
+            blocks.push(<ol key={key++} className="list-decimal pl-5 space-y-1.5 marker:text-gray-400 marker:font-semibold">{items.map((it, j) => <li key={j} className="pl-1">{renderInline(it, `o${key}-${j}`)}</li>)}</ol>);
+            continue;
+        }
+        const para: string[] = [];
+        while (i < lines.length) {
+            const lt = lines[i].trim();
+            if (lt === '' || isHr(lt) || isBullet(lt) || isNum(lt) || isHeading(lt)) break;
+            para.push(lt); i++;
+        }
+        blocks.push(<p key={key++} className="text-gray-700 leading-relaxed">{renderInline(para.join(' '), `p${key}`)}</p>);
+    }
+    return <div className="report-body space-y-3 text-sm sm:text-[15px]">{blocks}</div>;
+};
+
+// --- KPI card ---
+interface KpiCardProps { label: string; value: number | string; accent: string; icon: React.ReactNode; }
+const KpiCard: React.FC<KpiCardProps> = ({ label, value, accent, icon }) => {
+    const numeric = typeof value === 'number';
+    const counted = useCountUp(numeric ? value : 0);
+    return (
+        <div className="kpi-card glass-card p-6 flex items-start justify-between gap-3 overflow-hidden relative">
+            <span className="absolute -top-8 -right-8 w-24 h-24 rounded-full blur-2xl opacity-40 pointer-events-none" style={{ background: accent }} aria-hidden="true"></span>
+            <div className="relative">
+                <h3 className="text-gray-500 text-xs font-semibold uppercase tracking-wide">{label}</h3>
+                <p className="text-3xl font-extrabold mt-2 text-gray-900 tabular-nums">{numeric ? counted : value}</p>
+            </div>
+            <span className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 relative" style={{ background: `${accent}1f`, color: accent }}>
+                <Icon path={icon} className="w-5 h-5" />
+            </span>
         </div>
+    );
+};
+
+// --- Glass sidebar + top bar ---
+const Sidebar: React.FC<{ activeTab: Tab; onSwitchTab: (t: Tab) => void }> = ({ activeTab, onSwitchTab }) => (
+    <aside className="hidden md:flex flex-col items-center gap-1.5 w-[84px] shrink-0 glass-sidebar sticky top-0 h-screen py-5 px-2 z-40">
+        <div className="w-11 h-11 mb-3 rounded-2xl flex items-center justify-center text-white font-extrabold text-xl shrink-0"
+             style={{ background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%)', boxShadow: '0 10px 22px -8px rgba(74,144,226,0.8)' }}>B</div>
+        <nav className="flex flex-col gap-1.5 w-full overflow-y-auto scrollbar-hide">
+            {TAB_META.map(tab => (
+                <button key={tab.id} onClick={() => onSwitchTab(tab.id)} aria-current={activeTab === tab.id}
+                        className={`side-link ${activeTab === tab.id ? 'active' : ''}`} title={tab.label}>
+                    <Icon path={TabIcons[tab.id]} className="w-[22px] h-[22px]" />
+                    <span>{tab.label}</span>
+                </button>
+            ))}
+        </nav>
+    </aside>
+);
+
+const TopBar: React.FC<{ activeLabel: string; activeTab: Tab; onSwitchTab: (t: Tab) => void }> = ({ activeLabel, activeTab, onSwitchTab }) => {
+    const [dark, toggleDark] = useDarkMode();
+    return (
+        <header className="glass-topbar sticky top-0 z-30">
+            <div className="w-full max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between items-center gap-3 py-3.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <span className="md:hidden w-9 h-9 rounded-xl flex items-center justify-center text-white font-extrabold text-lg shrink-0" style={{ background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%)' }}>B</span>
+                        <div className="flex items-baseline gap-2 min-w-0">
+                            <h1 className="text-lg sm:text-xl font-bold text-gray-800 truncate">Skills Intelligence</h1>
+                            <span className="hidden sm:inline text-gray-400">/</span>
+                            <span className="hidden sm:inline text-sm font-semibold text-gray-500 truncate">{activeLabel}</span>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 sm:gap-3">
+                        <span className="glass-chip hidden sm:inline-flex"><span className="w-2 h-2 rounded-full" style={{ background: 'var(--accent)' }}></span>AI Ready</span>
+                        <button onClick={toggleDark} className="icon-btn" aria-label="Toggle dark mode" title="Toggle theme">
+                            {dark
+                                ? <Icon path={<><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>} className="w-5 h-5" />
+                                : <Icon path={<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>} className="w-5 h-5" />}
+                        </button>
+                        <button className="icon-btn" aria-label="Notifications" title="Notifications">
+                            <Icon path={<><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></>} className="w-5 h-5" />
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">3</span>
+                        </button>
+                        <div className="flex items-center gap-2 pl-1">
+                            <span className="hidden lg:inline text-sm text-gray-500">HR Manager</span>
+                            <img src="https://placehold.co/40x40/4A90E2/FFFFFF?text=HR" alt="User Avatar" className="w-9 h-9 rounded-full ring-2 ring-white/60" />
+                        </div>
+                    </div>
+                </div>
+                <nav className="md:hidden flex gap-2 overflow-x-auto pb-3 -mx-1 px-1 scrollbar-hide">
+                    {TAB_META.map(tab => (
+                        <button key={tab.id} onClick={() => onSwitchTab(tab.id)} className={`pill-link ${activeTab === tab.id ? 'active' : ''}`}>{tab.label}</button>
+                    ))}
+                </nav>
+            </div>
+        </header>
     );
 };
 
@@ -215,92 +478,44 @@ const App: React.FC = () => {
     if (isLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center">
-                <Loader />
+                <div className="glass-card p-10 flex flex-col items-center gap-4">
+                    <div className="loader"></div>
+                    <p className="text-sm text-gray-500">Loading your skills intelligence…</p>
+                </div>
             </div>
         );
     }
-    
-    return (
-        <div id="app" className="min-h-screen flex flex-col">
-            <Header activeTab={activeTab} onSwitchTab={handleSwitchTab} />
 
-            <main className="flex-grow container mx-auto p-4 sm:p-6 lg:px-8">
-                {activeTab === 'dashboard' && <DashboardSection people={people} skills={skills} occupations={occupations} learningPaths={learningPaths} courses={courses} onSwitchTab={handleSwitchTab} />}
-                {activeTab === 'people' && <PeopleSection people={people} skills={skills} occupations={occupations} courses={courses} onBulkAssign={handleBulkAssign} />}
-                {activeTab === 'occupations' && <OccupationsSection occupations={occupations} skills={skills} onAddOccupation={addNewOccupation} onAddNewSkills={addNewSkills} showToast={showToast} people={people} courses={courses} />}
-                {activeTab === 'projects' && <ProjectsSection people={people} skills={skills} showToast={showToast} setProjectAnalysis={setProjectAnalysis} />}
-                {activeTab === 'development' && <DevelopmentSection learningPaths={learningPaths} people={people} skills={skills} setLearningPaths={setLearningPaths} onSkillUpdate={handlePersonSkillUpdate} setAuditVersion={setAuditVersion} />}
-                {activeTab === 'analysis' && <AnalysisSection people={people} occupations={occupations} skills={skills} onAssignCourse={handleAssignCourse} onBulkAssign={handleBulkAssign} />}
-                {activeTab === 'manager' && <ManagerSection people={people} learningPaths={learningPaths} courses={courses} skills={skills} />}
-                {activeTab === 'reports' && <ReportsSection people={people} departments={departments} showToast={showToast} />}
-                {activeTab === 'audit' && <AuditSection auditVersion={auditVersion} />}
-            </main>
+    const activeLabel = TAB_META.find(t => t.id === activeTab)?.label ?? 'Dashboard';
+
+    return (
+        <div id="app" className="min-h-screen md:flex">
+            <Sidebar activeTab={activeTab} onSwitchTab={handleSwitchTab} />
+
+            <div className="flex-1 min-w-0 flex flex-col">
+                <TopBar activeLabel={activeLabel} activeTab={activeTab} onSwitchTab={handleSwitchTab} />
+
+                <main className="flex-grow w-full max-w-[1500px] mx-auto p-4 sm:p-6 lg:px-8">
+                    <div key={activeTab} className="fade-in">
+                        {activeTab === 'dashboard' && <DashboardSection people={people} skills={skills} occupations={occupations} learningPaths={learningPaths} courses={courses} onSwitchTab={handleSwitchTab} />}
+                        {activeTab === 'people' && <PeopleSection people={people} skills={skills} occupations={occupations} courses={courses} onBulkAssign={handleBulkAssign} />}
+                        {activeTab === 'occupations' && <OccupationsSection occupations={occupations} skills={skills} onAddOccupation={addNewOccupation} onAddNewSkills={addNewSkills} showToast={showToast} people={people} courses={courses} />}
+                        {activeTab === 'projects' && <ProjectsSection people={people} skills={skills} showToast={showToast} setProjectAnalysis={setProjectAnalysis} />}
+                        {activeTab === 'development' && <DevelopmentSection learningPaths={learningPaths} people={people} skills={skills} setLearningPaths={setLearningPaths} onSkillUpdate={handlePersonSkillUpdate} setAuditVersion={setAuditVersion} />}
+                        {activeTab === 'analysis' && <AnalysisSection people={people} occupations={occupations} skills={skills} onAssignCourse={handleAssignCourse} onBulkAssign={handleBulkAssign} />}
+                        {activeTab === 'manager' && <ManagerSection people={people} learningPaths={learningPaths} courses={courses} skills={skills} />}
+                        {activeTab === 'reports' && <ReportsSection people={people} departments={departments} showToast={showToast} />}
+                        {activeTab === 'audit' && <AuditSection auditVersion={auditVersion} />}
+                    </div>
+                </main>
+            </div>
 
             {projectAnalysis && <ProjectAnalysisResultModal result={projectAnalysis} onClose={() => setProjectAnalysis(null)} />}
 
-            <div id="toast" className={`fixed bottom-5 right-5 bg-gray-800 text-white py-2 px-4 rounded-lg shadow-lg transition-opacity duration-300 ${toast.visible ? 'opacity-100' : 'opacity-0'}`}>
-                <p id="toast-message">{toast.message}</p>
+            <div id="toast" className={`fixed bottom-5 right-5 z-[60] glass-strong text-gray-800 py-3 px-5 rounded-2xl shadow-lg transition-all duration-300 ${toast.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}>
+                <p id="toast-message" className="text-sm font-medium">{toast.message}</p>
             </div>
         </div>
-    );
-};
-
-// --- Header Component ---
-interface HeaderProps {
-    activeTab: Tab;
-    onSwitchTab: (tab: Tab) => void;
-}
-const Header: React.FC<HeaderProps> = ({ activeTab, onSwitchTab }) => {
-    const tabs: { id: Tab; label: string }[] = [
-        { id: 'dashboard', label: 'Dashboard' },
-        { id: 'people', label: 'People' },
-        { id: 'occupations', label: 'Occupations' },
-        { id: 'projects', label: 'Projects' },
-        { id: 'development', label: 'Development' },
-        { id: 'analysis', label: 'Analysis' },
-        { id: 'manager', label: 'Manager' },
-        { id: 'reports', label: 'Reports' },
-        { id: 'audit', label: 'Audit' }
-    ];
-
-    return (
-         <header className="bg-[#4A90E2] shadow-md sticky top-0 z-40">
-            <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center py-4">
-                    <div className="flex items-center space-x-2">
-                        <span className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-[#4A90E2] font-bold text-lg">B</span>
-                        <h1 className="text-2xl font-bold text-white hidden md:block">Skills Intelligence</h1>
-                    </div>
-                    <nav className="hidden lg:flex space-x-1">
-                        {tabs.map(tab => (
-                            <button
-                                key={tab.id}
-                                onClick={() => onSwitchTab(tab.id)}
-                                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors duration-200 ${activeTab === tab.id ? 'bg-blue-700 text-white' : 'text-blue-100 hover:bg-blue-600 hover:text-white'}`}
-                            >
-                                {tab.label}
-                            </button>
-                        ))}
-                    </nav>
-                     <div className="flex items-center">
-                        <span className="hidden sm:inline text-sm text-blue-100 mr-3">Welcome, HR Manager</span>
-                        <img src="https://placehold.co/40x40/FFFFFF/4A90E2?text=HR" alt="User Avatar" className="w-10 h-10 rounded-full" />
-                    </div>
-                </div>
-                {/* Mobile Nav */}
-                <div className="lg:hidden flex overflow-x-auto pb-2 space-x-2 scrollbar-hide">
-                    {tabs.map(tab => (
-                        <button
-                            key={tab.id}
-                            onClick={() => onSwitchTab(tab.id)}
-                            className={`whitespace-nowrap px-3 py-2 text-sm font-medium rounded-md ${activeTab === tab.id ? 'bg-blue-700 text-white' : 'text-blue-100'}`}
-                        >
-                            {tab.label}
-                        </button>
-                    ))}
-                </div>
-            </div>
-        </header>
     );
 };
 
@@ -319,6 +534,7 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
     const chartInstanceRef = useRef<any>(null);
     const [heatmapMode, setHeatmapMode] = useState<HeatmapMode>('jobs');
     const [isLoadingChart, setIsLoadingChart] = useState(false);
+    const themeTick = useThemeTick();
 
     const getSkillById = (id: number) => skills.find(s => s.id === id);
 
@@ -379,7 +595,21 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
         if (chartInstanceRef.current) {
             chartInstanceRef.current.destroy();
         }
-        
+
+        const dark = isDarkTheme();
+        const tickColor = cssVar('--text-muted', '#64748b');
+        const emptyCell = dark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.12)';
+        const ramp: [number, number, number][] = [[191, 219, 254], [96, 165, 250], [79, 70, 229]];
+        const heatColor = (ratio: number) => {
+            const r = Math.max(0, Math.min(1, ratio));
+            const seg = r <= 0.5 ? 0 : 1;
+            const t = r <= 0.5 ? r / 0.5 : (r - 0.5) / 0.5;
+            const a = ramp[seg], b = ramp[seg + 1];
+            const mix = (k: number) => Math.round(a[k] + (b[k] - a[k]) * t);
+            return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
+        };
+        if (Chart.defaults) Chart.defaults.font.family = "'Inter', sans-serif";
+
         if (ctx) {
             chartInstanceRef.current = new Chart(ctx, {
                 type: 'matrix',
@@ -389,26 +619,39 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
                         data: chartData,
                         backgroundColor: (c: any) => {
                             const value = c.dataset.data[c.dataIndex]?.v;
-                            if (value === undefined) return 'rgba(243, 244, 246, 1)';
-                            const alpha = value / maxCount;
-                            return `rgba(74, 144, 226, ${alpha * 0.8 + 0.2})`;
+                            if (value === undefined) return emptyCell;
+                            return heatColor(value / maxCount);
                         },
-                        borderColor: 'rgba(255, 255, 255, 0.5)',
-                        borderWidth: 1,
-                        width: ({chart}: any) => (chart.chartArea || {}).width / xLabels.length - 1,
-                        height: ({chart}: any) => (chart.chartArea || {}).height / yLabels.length - 1,
+                        hoverBackgroundColor: (c: any) => {
+                            const value = c.dataset.data[c.dataIndex]?.v;
+                            if (value === undefined) return emptyCell;
+                            return heatColor(Math.min(1, value / maxCount + 0.25));
+                        },
+                        borderColor: dark ? 'rgba(15,23,42,0.6)' : 'rgba(255,255,255,0.75)',
+                        borderWidth: 2,
+                        borderRadius: 6,
+                        hoverBorderColor: cssVar('--accent', '#4A90E2'),
+                        width: ({chart}: any) => (chart.chartArea || {}).width / xLabels.length - 5,
+                        height: ({chart}: any) => (chart.chartArea || {}).height / yLabels.length - 5,
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { title: () => '', label: (c: any) => { const item = c.dataset.data[c.dataIndex]; return [`Skill: ${item.y}`, `${heatmapMode === 'jobs' ? 'Job' : 'Department'}: ${item.x}`, `Count: ${item.v}`]; } } } },
-                    scales: { x: { type: 'category', labels: xLabels, ticks: { autoSkip: false, maxRotation: 90, minRotation: 45 } }, y: { type: 'category', labels: yLabels, offset: true } }
+                    animation: { duration: 700, easing: 'easeOutQuart' },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { ...glassTooltip(dark), callbacks: { title: () => '', label: (c: any) => { const item = c.dataset.data[c.dataIndex]; return [`Skill: ${item.y}`, `${heatmapMode === 'jobs' ? 'Job' : 'Department'}: ${item.x}`, `Count: ${item.v}`]; } } }
+                    },
+                    scales: {
+                        x: { type: 'category', labels: xLabels, offset: true, grid: { display: false }, border: { display: false }, ticks: { color: tickColor, autoSkip: false, maxRotation: 90, minRotation: 45 } },
+                        y: { type: 'category', labels: yLabels, offset: true, grid: { display: false }, border: { display: false }, ticks: { color: tickColor } }
+                    }
                 }
             });
         }
         setIsLoadingChart(false);
-    }, [heatmapMode, people, skills]);
+    }, [heatmapMode, people, skills, themeTick]);
 
     useEffect(() => {
         const timer = setTimeout(() => updateHeatmap(), 100);
@@ -452,13 +695,13 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
                 <p className="mt-1 text-gray-600">This section provides a high-level overview of your organization's skills landscape and quick access to key functions.</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <div className="kpi-card bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-500"><h3 className="text-gray-500 text-sm font-medium">Total Employees</h3><p className="text-3xl font-bold mt-2">{people.length}</p></div>
-                <div className="kpi-card bg-white p-6 rounded-lg shadow-md border-l-4 border-green-500"><h3 className="text-gray-500 text-sm font-medium">Total Skills Identified</h3><p className="text-3xl font-bold mt-2">{skills.length}</p></div>
-                <div className="kpi-card bg-white p-6 rounded-lg shadow-md border-l-4 border-yellow-500"><h3 className="text-gray-500 text-sm font-medium">Occupations Loaded</h3><p className="text-3xl font-bold mt-2">{occupations.length}</p></div>
-                <div className="kpi-card bg-white p-6 rounded-lg shadow-md border-l-4 border-purple-500"><h3 className="text-gray-500 text-sm font-medium">Active Learning Paths</h3><p className="text-3xl font-bold mt-2">{Object.keys(learningPaths).length}</p></div>
+                <KpiCard label="Total Employees" value={people.length} accent="#3b82f6" icon={<><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M21 21v-2a4 4 0 0 0-3-3.87"/></>} />
+                <KpiCard label="Total Skills Identified" value={skills.length} accent="#22c55e" icon={<><path d="m12 3 2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5L12 3Z"/></>} />
+                <KpiCard label="Occupations Loaded" value={occupations.length} accent="#eab308" icon={<><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></>} />
+                <KpiCard label="Active Learning Paths" value={Object.keys(learningPaths).length} accent="#a855f7" icon={<><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1 2.5 3 6 3s6-2 6-3v-5"/></>} />
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-md relative">
+                <div className="lg:col-span-2 glass-card p-6 relative">
                     {isLoadingChart && <Loader />}
                     <div className="flex flex-col sm:flex-row justify-between items-center mb-4">
                         <div><h3 className="text-xl font-semibold">Skills Heat Map</h3><p className="text-sm text-gray-600">Visualize skill density across jobs or departments.</p></div>
@@ -469,12 +712,12 @@ const DashboardSection: React.FC<DashboardSectionProps> = ({ people, skills, occ
                     </div>
                     <div className="chart-container h-[450px]"><canvas ref={chartRef}></canvas></div>
                 </div>
-                <div className="bg-white p-6 rounded-lg shadow-md">
+                <div className="glass-card p-6">
                     <h3 className="text-xl font-semibold mb-4">Quick Actions</h3>
                     <div className="space-y-4">
-                        <button onClick={() => onSwitchTab('occupations')} className="w-full text-left p-4 rounded-lg bg-blue-50 hover:bg-blue-100 transition"><h4 className="font-semibold text-blue-800">📄 View Occupations</h4><p className="text-sm text-blue-700">Explore official occupation profiles.</p></button>
-                        <button onClick={() => onSwitchTab('analysis')} className="w-full text-left p-4 rounded-lg bg-green-50 hover:bg-green-100 transition"><h4 className="font-semibold text-green-800">🔍 Run a Skill Gap Analysis</h4><p className="text-sm text-green-700">Compare an employee to an occupation.</p></button>
-                        <button onClick={() => onSwitchTab('manager')} className="w-full text-left p-4 rounded-lg bg-purple-50 hover:bg-purple-100 transition"><h4 className="font-semibold text-purple-800">👥 Manager Dashboard</h4><p className="text-sm text-purple-700">Manage team skills and budget.</p></button>
+                        <button onClick={() => onSwitchTab('occupations')} className="hover-slide w-full text-left p-4 rounded-xl bg-blue-50 hover:bg-blue-100"><h4 className="font-semibold text-blue-800">📄 View Occupations</h4><p className="text-sm text-blue-700">Explore official occupation profiles.</p></button>
+                        <button onClick={() => onSwitchTab('analysis')} className="hover-slide w-full text-left p-4 rounded-xl bg-green-50 hover:bg-green-100"><h4 className="font-semibold text-green-800">🔍 Run a Skill Gap Analysis</h4><p className="text-sm text-green-700">Compare an employee to an occupation.</p></button>
+                        <button onClick={() => onSwitchTab('manager')} className="hover-slide w-full text-left p-4 rounded-xl bg-purple-50 hover:bg-purple-100"><h4 className="font-semibold text-purple-800">👥 Manager Dashboard</h4><p className="text-sm text-purple-700">Manage team skills and budget.</p></button>
                         <RecommendedCourse />
                     </div>
                 </div>
@@ -511,7 +754,7 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, skills, occupatio
                 <h2 className="text-3xl font-bold text-gray-900">People</h2>
                 <p className="mt-1 text-gray-600">Explore employee profiles, view their skills, and plan their career development paths.</p>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="glass-card p-6">
                 <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
                     <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search by name or email..." className="w-full sm:w-1/2 pl-4 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     <div className="flex w-full sm:w-auto gap-4">
@@ -529,7 +772,7 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, skills, occupatio
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Skill Match</th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody className="divide-y divide-gray-200">
                             {filteredPeople.map(person => {
                                 const occupation = occupations.find(o => o.title === person.job);
                                 let matchPercentage = 0;
@@ -545,7 +788,7 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, skills, occupatio
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{person.department}</td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center">
-                                                <div className="w-full bg-gray-200 rounded-full h-4 mr-2"><div className="bg-blue-500 h-4 rounded-full" style={{width: `${matchPercentage}%`}}></div></div>
+                                                <div className="progress-track w-full h-3 mr-2"><div className="progress-fill" style={{width: `${matchPercentage}%`}}></div></div>
                                                 <span className="text-sm text-gray-600 w-10 text-right">{Math.round(matchPercentage)}%</span>
                                             </div>
                                         </td>
@@ -683,7 +926,7 @@ const CareerPathModal: React.FC<CareerPathModalProps> = ({ person, onClose, occu
                             {learningPlan && (
                                 <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                                     <h4 className="font-semibold text-lg text-blue-800 mb-2">Your Personalized Pathway</h4>
-                                    <div className="whitespace-pre-wrap text-gray-700 font-sans">{learningPlan}</div>
+                                    <FormattedReport text={learningPlan} />
                                 </div>
                             )}
                         </div>
@@ -790,7 +1033,7 @@ const OccupationsSection: React.FC<OccupationsSectionProps> = ({ occupations, sk
             <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Occupations & Job Descriptions</h2><p className="mt-1 text-gray-600">Manage company roles, analyze job descriptions with AI, and run strategic "Build vs. Buy" talent analysis.</p></div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="md:col-span-1 space-y-8">
-                    <div className="bg-white p-6 rounded-lg shadow-md">
+                    <div className="glass-card p-6">
                         <h3 className="text-xl font-semibold mb-4">Upload Job Description</h3>
                         {!isUploading ? (
                         <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
@@ -809,7 +1052,7 @@ const OccupationsSection: React.FC<OccupationsSectionProps> = ({ occupations, sk
                         )}
                     </div>
                 </div>
-                <div className="md:col-span-2 bg-white p-6 rounded-lg shadow-md relative">
+                <div className="md:col-span-2 glass-card p-6 relative">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-xl font-semibold">Current Roles</h3>
                         <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search roles..." className="w-1/2 pl-4 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -854,6 +1097,7 @@ const AnalysisSection: React.FC<AnalysisSectionProps> = ({ people, occupations, 
 
     const chartRef = useRef<HTMLCanvasElement>(null);
     const chartInstanceRef = useRef<any>(null);
+    const themeTick = useThemeTick();
 
     const getSkillById = (id: number) => skills.find(s => s.id === id);
 
@@ -883,14 +1127,44 @@ const AnalysisSection: React.FC<AnalysisSectionProps> = ({ people, occupations, 
             const ctx = chartRef.current.getContext('2d');
             if (chartInstanceRef.current) chartInstanceRef.current.destroy();
             if (ctx) {
+                const dark = isDarkTheme();
+                const total = analysisResult.occupation.skills.length;
+                const matches = analysisResult.matchingSkills.length;
+                const gaps = analysisResult.gapSkills.length;
+                const pct = total > 0 ? Math.round((matches / total) * 100) : 100;
+                if (Chart.defaults) Chart.defaults.font.family = "'Inter', sans-serif";
                 chartInstanceRef.current = new Chart(ctx, {
                     type: 'doughnut',
-                    data: { labels: ['Matching Skills', 'Skill Gaps'], datasets: [{ data: [analysisResult.matchingSkills.length, analysisResult.gapSkills.length], backgroundColor: ['#22c55e', '#ef4444'], borderColor: '#ffffff', borderWidth: 2 }] },
-                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, cutout: '70%' }
+                    data: {
+                        labels: ['Matching Skills', 'Skill Gaps'],
+                        datasets: [{
+                            data: [matches, gaps],
+                            backgroundColor: (c: any) => {
+                                const { chart, dataIndex } = c;
+                                const { ctx: cx, chartArea } = chart;
+                                if (!chartArea) return dataIndex === 0 ? '#10b981' : '#f43f5e';
+                                return dataIndex === 0
+                                    ? vGradient(cx, chartArea, '#34d399', '#059669')
+                                    : vGradient(cx, chartArea, '#fb7185', '#e11d48');
+                            },
+                            borderColor: 'transparent', borderWidth: 0, borderRadius: 8,
+                            spacing: matches > 0 && gaps > 0 ? 3 : 0, hoverOffset: 10,
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, cutout: '72%',
+                        animation: { animateRotate: true, animateScale: true, duration: 900, easing: 'easeOutQuart' },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: glassTooltip(dark),
+                            centerText: { text: `${pct}%`, sub: 'match', color: cssVar('--text-strong', dark ? '#f1f5f9' : '#0f172a'), subColor: cssVar('--text-muted', '#64748b'), size: 30 },
+                        } as any
+                    },
+                    plugins: [centerTextPlugin]
                 });
             }
         }
-    }, [analysisResult]);
+    }, [analysisResult, themeTick]);
 
     const handleGeneratePlan = async () => {
         if (!analysisResult) return;
@@ -912,7 +1186,7 @@ const AnalysisSection: React.FC<AnalysisSectionProps> = ({ people, occupations, 
     return (
         <section>
             <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Skills Analysis</h2><p className="mt-1 text-gray-600">Perform a detailed skills gap analysis, generate an AI learning plan, and find microcredentials to close gaps.</p></div>
-            <div className="bg-white p-6 rounded-lg shadow-md relative">
+            <div className="glass-card p-6 relative">
                 <h3 className="text-xl font-semibold mb-4">Skills Gap Analysis</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                     <div>
@@ -956,7 +1230,7 @@ const AnalysisSection: React.FC<AnalysisSectionProps> = ({ people, occupations, 
                             </div>
                         </div>
 
-                        {analysisResult.gapSkills.length > 0 && (<div className="mt-6 border-t pt-6"><button onClick={handleGeneratePlan} disabled={isGeneratingPlan} className="btn-primary font-semibold px-6 py-2 rounded-lg disabled:bg-gray-400">{isGeneratingPlan ? 'Generating Plan...' : 'Generate AI Learning Plan'}</button>{isGeneratingPlan && (<div className="mt-4 flex justify-center"><div className="loader" style={{borderTopColor: '#4A90E2', height: '30px', width: '30px'}}></div></div>)}{learningPlan && (<div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg"><h4 className="font-semibold text-lg text-blue-800 mb-2">Personalized Learning Plan</h4><div className="whitespace-pre-wrap text-gray-700 font-sans">{learningPlan}</div></div>)}</div>)}
+                        {analysisResult.gapSkills.length > 0 && (<div className="mt-6 border-t pt-6"><button onClick={handleGeneratePlan} disabled={isGeneratingPlan} className="btn-primary font-semibold px-6 py-2 rounded-lg disabled:bg-gray-400">{isGeneratingPlan ? 'Generating Plan...' : 'Generate AI Learning Plan'}</button>{isGeneratingPlan && (<div className="mt-4 flex justify-center"><div className="loader" style={{borderTopColor: '#4A90E2', height: '30px', width: '30px'}}></div></div>)}{learningPlan && (<div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg"><h4 className="font-semibold text-lg text-blue-800 mb-2">Personalized Learning Plan</h4><FormattedReport text={learningPlan} /></div>)}</div>)}
                     </div>
                 )}
             </div>
@@ -998,7 +1272,7 @@ const ProjectsSection: React.FC<any> = ({ people, skills, showToast, setProjectA
     return (
         <section>
             <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Project Planning</h2><p className="mt-1 text-gray-600">Analyze project requirements and identify skill gaps instantly using AI.</p></div>
-            <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="glass-card p-6">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Project Brief / RFP Text</label>
                 <textarea 
                     className="w-full h-48 p-4 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
@@ -1039,7 +1313,7 @@ const ProjectAnalysisResultModal: React.FC<{ result: ProjectAnalysisResult[], on
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
+                    <tbody className="divide-y divide-gray-200">
                         {result.map((row, idx) => (
                             <tr key={idx}>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{row.skill}</td>
@@ -1124,7 +1398,7 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
 
     if (activePeople.length === 0) {
         return (
-            <div className="p-10 text-center bg-white rounded-2xl shadow-sm border border-slate-200">
+            <div className="p-10 text-center glass-card">
                 <p className="text-gray-500">No active learning paths. Assign courses from the Analysis tab to begin.</p>
             </div>
         );
@@ -1133,9 +1407,9 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
     const selectedProgress = selectedPerson ? calculateProgress(selectedPerson.id) : 0;
 
     return (
-        <section className="flex flex-col lg:flex-row h-[calc(100vh-140px)] bg-[#F8FAFC] rounded-2xl overflow-hidden shadow-xl border border-slate-200 font-sans">
+        <section className="flex flex-col lg:flex-row h-[calc(100vh-140px)] glass-card overflow-hidden font-sans">
             {/* Left Sidebar - Team List */}
-            <aside className="w-full lg:w-96 bg-white border-r border-slate-200 overflow-y-auto custom-scrollbar">
+            <aside className="w-full lg:w-96 glass-soft border-r overflow-y-auto custom-scrollbar">
                 <div className="p-6">
                     <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Team Progress</h2>
                     <div className="space-y-4">
@@ -1146,7 +1420,7 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
                                 <div
                                     key={p.id}
                                     onClick={() => setSelectedPersonId(p.id)}
-                                    className={`p-4 rounded-2xl border-2 cursor-pointer transition-all ${isSelected ? 'border-[#303F9F] bg-white ring-4 ring-[#303F9F]/5 shadow-md' : 'border-transparent hover:bg-slate-50 border-slate-100'}`}
+                                    className={`p-4 rounded-2xl border-2 cursor-pointer transition-all ${isSelected ? 'border-[#4A90E2] glass-strong ring-2 ring-[#4A90E2]/30 shadow-md' : 'border-transparent hover:bg-slate-50 border-slate-100'}`}
                                 >
                                     <div className="flex items-center gap-3 mb-3">
                                         <img 
@@ -1159,12 +1433,12 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
                                             <p className="text-[10px] text-slate-500">{p.job}</p>
                                         </div>
                                         <div className="ml-auto text-right">
-                                            <p className={`text-sm font-black ${isSelected ? 'text-[#303F9F]' : 'text-slate-400'}`}>{progress}%</p>
+                                            <p className={`text-sm font-black ${isSelected ? 'text-[#2f6fd0]' : 'text-slate-400'}`}>{progress}%</p>
                                         </div>
                                     </div>
                                     <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
                                         <div 
-                                            className={`h-full rounded-full transition-all duration-500 ${isSelected ? 'bg-[#303F9F]' : 'bg-slate-300'}`} 
+                                            className={`h-full rounded-full transition-all duration-500 ${isSelected ? 'bg-[#2f6fd0]' : 'bg-slate-300'}`} 
                                             style={{ width: `${progress}%` }}
                                         ></div>
                                     </div>
@@ -1176,18 +1450,18 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
             </aside>
 
             {/* Main Content - Detail View */}
-            <main className="flex-1 bg-[#F8FAFC] overflow-y-auto p-8 relative">
+            <main className="flex-1 bg-transparent overflow-y-auto p-8 relative">
                 {selectedPerson && selectedPath && (
                     <div className="max-w-5xl mx-auto">
                         {/* Header */}
                         <div className="flex items-end justify-between mb-8 border-b border-slate-200 pb-6">
                             <div>
-                                <span className="px-2 py-1 bg-[#303F9F]/10 text-[#303F9F] text-[10px] font-bold rounded mb-2 inline-block uppercase tracking-wider">Selected Employee</span>
+                                <span className="px-2 py-1 bg-[#2f6fd0]/10 text-[#2f6fd0] text-[10px] font-bold rounded mb-2 inline-block uppercase tracking-wider">Selected Employee</span>
                                 <h2 className="text-3xl font-bold text-slate-800">{selectedPerson.name}</h2>
                                 <p className="text-sm text-slate-500 font-medium mt-1">{selectedPerson.job} Pathway • Enrolled {new Date(selectedPath.skills[0]?.enrolledDate || Date.now()).toLocaleDateString('en-US', {month: 'short', year: 'numeric'})}</p>
                             </div>
                             <div className="text-right">
-                                <p className="text-4xl font-black text-[#303F9F]">{selectedProgress}%</p>
+                                <p className="text-4xl font-black text-[#2f6fd0]">{selectedProgress}%</p>
                                 <p className="text-[11px] uppercase tracking-widest font-bold text-slate-400">Total Pathway Progress</p>
                             </div>
                         </div>
@@ -1203,7 +1477,7 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
                                     // Visual logic: Completed -> Green, In Progress -> Blue/Primary, Not Started -> Gray
                                     if (item.status === 'Completed') {
                                         return (
-                                            <div key={idx} className="flex-shrink-0 w-80 bg-white rounded-2xl p-5 shadow-sm border border-slate-100 snap-center">
+                                            <div key={idx} className="flex-shrink-0 w-80 glass-card p-5 snap-center">
                                                 <div className="flex items-center justify-between mb-4">
                                                     <span className="material-symbols-outlined text-green-600 bg-green-100 rounded-full p-1 text-lg font-bold">check</span>
                                                     <span className="text-[11px] font-bold text-green-600 uppercase tracking-tight">Completed</span>
@@ -1222,20 +1496,20 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
                                         // Current / Upcoming
                                         const isCurrent = item.status === 'In Progress' || item.status === 'Not Started'; // Simplified for demo
                                         return (
-                                            <div key={idx} className="flex-shrink-0 w-80 bg-white rounded-2xl p-5 shadow-xl border-2 border-[#303F9F]/10 ring-4 ring-[#303F9F]/5 snap-center">
+                                            <div key={idx} className="flex-shrink-0 w-80 glass-card p-5 ring-2 ring-[#4A90E2]/30 snap-center">
                                                 <div className="flex items-center justify-between mb-4">
-                                                    <span className="material-symbols-outlined text-[#303F9F] bg-blue-100 rounded-full p-1 text-lg">pending</span>
-                                                    <span className="text-[11px] font-bold text-[#303F9F] uppercase tracking-tight">Current Focus</span>
+                                                    <span className="material-symbols-outlined text-[#2f6fd0] bg-blue-100 rounded-full p-1 text-lg">pending</span>
+                                                    <span className="text-[11px] font-bold text-[#2f6fd0] uppercase tracking-tight">Current Focus</span>
                                                 </div>
                                                 <div className="w-full h-32 bg-blue-50 rounded-xl mb-4 flex items-center justify-center">
                                                     <span className="text-4xl">📚</span>
                                                 </div>
                                                 <h3 className="font-bold text-base mb-2 text-slate-800 line-clamp-1" title={skillName}>{skillName}</h3>
                                                 <div className="w-full bg-slate-100 h-2 rounded-full mb-4">
-                                                    <div className="bg-[#303F9F] h-full w-[45%] rounded-full"></div>
+                                                    <div className="bg-[#2f6fd0] h-full w-[45%] rounded-full"></div>
                                                 </div>
                                                 <div className="flex flex-col gap-2">
-                                                    <a href="#" className="block w-full py-3 bg-[#303F9F] text-white text-center text-xs font-bold rounded-xl shadow-lg shadow-[#303F9F]/20 hover:bg-[#283593] transition-colors">
+                                                    <a href="#" className="block w-full py-3 bg-[#2f6fd0] text-white text-center text-xs font-bold rounded-xl shadow-lg shadow-[#2f6fd0]/20 hover:bg-[#255aa8] transition-colors">
                                                         Start Learning
                                                     </a>
                                                     <button 
@@ -1262,10 +1536,10 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
                                 
                                 return (
                                     <div key={idx} className="relative pl-12">
-                                        <div className={`absolute left-0 top-2 w-10 h-10 rounded-full border-4 border-white flex items-center justify-center z-10 shadow-sm ${isCompleted ? 'bg-green-500 text-white' : 'bg-[#303F9F] text-white'}`}>
+                                        <div className={`absolute left-0 top-2 w-10 h-10 rounded-full border-4 border-white flex items-center justify-center z-10 shadow-sm ${isCompleted ? 'bg-green-500 text-white' : 'bg-[#2f6fd0] text-white'}`}>
                                             <span className="material-symbols-outlined text-xl">{isCompleted ? 'check' : 'play_arrow'}</span>
                                         </div>
-                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row gap-6 hover:shadow-md transition-shadow">
+                                        <div className="glass-card p-6 flex flex-col md:flex-row gap-6 hover:shadow-md transition-shadow">
                                             <div className={`w-32 h-20 rounded-xl flex-shrink-0 flex items-center justify-center text-3xl ${isCompleted ? 'bg-green-50' : 'bg-blue-50'}`}>
                                                 {isCompleted ? '🎓' : '📖'}
                                             </div>
@@ -1275,12 +1549,12 @@ const DevelopmentSection: React.FC<any> = ({ learningPaths, people, skills, setL
                                                         <h4 className="font-bold text-base text-slate-800">{skillName}</h4>
                                                         <p className="text-xs text-slate-500">{item.courseName || 'Self-Directed Learning'}</p>
                                                     </div>
-                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${isCompleted ? 'text-green-600 bg-green-50' : 'text-[#303F9F] bg-blue-50'}`}>
+                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${isCompleted ? 'text-green-600 bg-green-50' : 'text-[#2f6fd0] bg-blue-50'}`}>
                                                         {item.status}
                                                     </span>
                                                 </div>
                                                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-2">
-                                                    <div className={`h-full w-full ${isCompleted ? 'bg-green-500' : 'bg-[#303F9F] w-1/3'}`}></div>
+                                                    <div className={`h-full w-full ${isCompleted ? 'bg-green-500' : 'bg-[#2f6fd0] w-1/3'}`}></div>
                                                 </div>
                                             </div>
                                         </div>
@@ -1316,21 +1590,21 @@ const ManagerSection: React.FC<any> = ({ people, learningPaths, courses, skills 
         <section>
             <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Manager Hub</h2><p className="mt-1 text-gray-600">Oversee team development budgets and approvals.</p></div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-500">
+                <div className="glass-card kpi-card p-6 border-l-4 border-blue-500">
                     <h3 className="text-gray-500 text-sm font-medium">Total L&D Budget</h3>
                     <p className="text-3xl font-bold mt-2">${totalBudget.toLocaleString()}</p>
                 </div>
-                <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-yellow-500">
+                <div className="glass-card kpi-card p-6 border-l-4 border-yellow-500">
                     <h3 className="text-gray-500 text-sm font-medium">Committed</h3>
                     <p className="text-3xl font-bold mt-2">${committed.toLocaleString()}</p>
                 </div>
-                 <div className="bg-white p-6 rounded-lg shadow-md border-l-4 border-green-500">
+                 <div className="glass-card kpi-card p-6 border-l-4 border-green-500">
                     <h3 className="text-gray-500 text-sm font-medium">Remaining</h3>
                     <p className="text-3xl font-bold mt-2">${remaining.toLocaleString()}</p>
                 </div>
             </div>
             
-            <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="glass-card p-6">
                 <h3 className="text-xl font-semibold mb-4">Team Skill Verification Requests</h3>
                 <div className="space-y-4">
                      <p className="text-gray-500 text-sm">No pending verification requests.</p>
@@ -1345,7 +1619,7 @@ const ReportsSection: React.FC<any> = ({ people, departments }) => {
         <section>
              <div className="mb-6"><h2 className="text-3xl font-bold text-gray-900">Reports</h2><p className="mt-1 text-gray-600">Strategic insights into organization capabilities.</p></div>
              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-lg shadow-md">
+                <div className="glass-card p-6">
                     <h3 className="font-semibold mb-4">Skill Distribution by Department</h3>
                     <div className="h-64 flex items-end justify-around space-x-2 px-4 border-b">
                         {departments.map((dept: string, i: number) => {
@@ -1360,7 +1634,7 @@ const ReportsSection: React.FC<any> = ({ people, departments }) => {
                         })}
                     </div>
                 </div>
-                <div className="bg-white p-6 rounded-lg shadow-md">
+                <div className="glass-card p-6">
                     <h3 className="font-semibold mb-4">Proficiency Levels</h3>
                     <div className="space-y-3">
                         {['Novice', 'Beginner', 'Competent', 'Proficient', 'Expert'].map((level) => {
@@ -1373,8 +1647,8 @@ const ReportsSection: React.FC<any> = ({ people, departments }) => {
                                         <span>{level}</span>
                                         <span>{count}</span>
                                     </div>
-                                    <div className="w-full bg-gray-200 rounded-full h-2">
-                                        <div className="bg-green-500 h-2 rounded-full" style={{width: `${pct}%`}}></div>
+                                    <div className="progress-track w-full h-2">
+                                        <div className="progress-fill" style={{width: `${pct}%`}}></div>
                                     </div>
                                 </div>
                             );
@@ -1399,7 +1673,7 @@ const AuditSection: React.FC<{ auditVersion: number }> = ({ auditVersion }) => {
                 <div><h2 className="text-3xl font-bold text-gray-900">Audit Logs</h2><p className="mt-1 text-gray-600">Track all changes and system activities.</p></div>
                 <button onClick={() => auditService.exportLogs()} className="btn-secondary px-4 py-2 rounded">Export CSV</button>
             </div>
-            <div className="bg-white shadow-md rounded-lg overflow-hidden">
+            <div className="glass-card overflow-hidden">
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                         <tr>
@@ -1410,7 +1684,7 @@ const AuditSection: React.FC<{ auditVersion: number }> = ({ auditVersion }) => {
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Details</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
+                    <tbody className="divide-y divide-gray-200">
                         {logs.map(log => (
                             <tr key={log.id}>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(log.timestamp).toLocaleString()}</td>
@@ -1546,7 +1820,7 @@ const TalentStrategyModal: React.FC<any> = ({ occupation, people, courses, onClo
                         <li className="flex justify-between"><span>Time Investment:</span> <span>${(trainingHours * hourlyRate).toLocaleString()}</span></li>
                         <li className="flex justify-between font-bold border-t border-green-300 pt-2"><span>Total Est. Cost:</span> <span>${buildCost.toLocaleString()}</span></li>
                     </ul>
-                    <div className="text-center bg-white p-2 rounded text-green-800 text-sm">
+                    <div className="text-center glass-soft p-2 text-green-800 text-sm">
                         <strong>Pros:</strong> Retains domain knowledge, higher morale.
                     </div>
                 </div>
@@ -1558,7 +1832,7 @@ const TalentStrategyModal: React.FC<any> = ({ occupation, people, courses, onClo
                         <li className="flex justify-between"><span>Onboarding:</span> <span>${onboardingCost.toLocaleString()}</span></li>
                         <li className="flex justify-between font-bold border-t border-blue-300 pt-2"><span>Total Est. Cost:</span> <span>${buyCost.toLocaleString()}</span></li>
                     </ul>
-                    <div className="text-center bg-white p-2 rounded text-blue-800 text-sm">
+                    <div className="text-center glass-soft p-2 text-blue-800 text-sm">
                         <strong>Pros:</strong> Immediate proficiency, fresh perspective.
                     </div>
                 </div>
