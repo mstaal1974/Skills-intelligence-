@@ -1,5 +1,6 @@
 {
   "name": "Blocksure Skills Intelligence",
   "description": "A comprehensive dashboard for HR managers to analyze, track, and develop employee skills, perform gap analysis against occupations, and manage learning paths.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }

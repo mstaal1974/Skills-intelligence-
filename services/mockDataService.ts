@@ -1,5 +1,5 @@
 
-import { Skill, RichSkill, Occupation, Person } from '../types';
+import { Skill, RichSkill, Occupation, Person, ProficiencyLevel } from '../types';
 
 export const getMockData = (): { skills: Skill[], richSkills: RichSkill[], occupationsData: any[] } => {
     const skills: Skill[] = [
@@ -32,25 +32,63 @@ export const getMockData = (): { skills: Skill[], richSkills: RichSkill[], occup
     return { skills, richSkills, occupationsData };
 };
 
+const getProficiency = (level: number): ProficiencyLevel => {
+    switch(level) {
+        case 1: return 'Novice';
+        case 2: return 'Beginner';
+        case 3: return 'Competent';
+        case 4: return 'Proficient';
+        case 5: return 'Expert';
+        default: return 'Novice';
+    }
+};
+
+const getRandomDate = (daysBack: number) => {
+    const date = new Date();
+    date.setDate(date.getDate() - Math.floor(Math.random() * daysBack));
+    return date.toISOString().split('T')[0];
+};
+
 export const generateMockPeople = (skills: Skill[], departments: string[]): Person[] => {
     const mockJobs = ["Senior Developer", "Data Scientist", "Project Manager", "UI/UX Designer", "Junior Developer", "Product Owner", "DevOps Engineer", "QA Tester"];
     const mockNames = [ "Alice Johnson", "Bob Williams", "Charlie Brown", "Diana Prince", "Ethan Hunt", "Fiona Glenanne", "George Costanza", "Helen Troy" ];
     
     return mockNames.map((name, index) => {
-        const personSkills: { id: number; level: number }[] = [];
+        const personSkills = [];
         const numSkills = Math.floor(Math.random() * 5) + 3;
+        
         for (let i = 0; i < numSkills; i++) {
             const randomSkill = skills[Math.floor(Math.random() * skills.length)];
             if (randomSkill && !personSkills.some(s => s.id === randomSkill.id)) {
-                 personSkills.push({ id: randomSkill.id, level: Math.floor(Math.random() * 5) + 1 });
+                 const level = Math.floor(Math.random() * 5) + 1;
+                 // 70% chance of being verified
+                 const verified = Math.random() > 0.3;
+                 
+                 personSkills.push({ 
+                     id: randomSkill.id, 
+                     level: level,
+                     proficiency: getProficiency(level),
+                     verified: verified,
+                     lastAssessed: getRandomDate(90),
+                     assessedBy: verified ? 'Manager' : 'Self' as 'Manager' | 'Self'
+                 });
             }
         }
+        
+        // Assign a random manager from the top half of the list (simulating hierarchy)
+        // Ensure they don't manage themselves
+        let managerId = undefined;
+        if (index > 2) {
+            managerId = (Math.floor(Math.random() * 3) + 1);
+        }
+
         return {
             id: index + 1,
             name: name,
             email: `${name.toLowerCase().replace(' ', '.')}@example.com`,
             job: mockJobs[index % mockJobs.length],
             department: departments[index % departments.length],
+            managerId: managerId,
             skills: personSkills
         };
     });

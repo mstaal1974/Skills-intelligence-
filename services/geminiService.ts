@@ -1,11 +1,14 @@
-
 import { GoogleGenAI, Type } from '@google/genai';
 import { GeminiSkillCategory, ProjectSkillRequirement } from '../types';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+// Lazily initialize the AI client to ensure process.env is available when called
+const getAi = () => {
+    return new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+};
 
 export const extractSkillsFromText = async (text: string): Promise<GeminiSkillCategory[]> => {
   try {
+    const ai = getAi();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `Analyze the following job description text and extract the key skills required. Group the skills into relevant categories like "Technical Skills", "Soft Skills", "Management Skills", etc. Only return the JSON object. Text: ${text}`,
@@ -60,6 +63,7 @@ export const generateLearningPlan = async (
   const prompt = `You are a professional development coach. An employee named ${personName}, who is currently a '${currentRole}', wants to become a '${targetRole}'. Her skill gaps are: ${skillGaps.join(', ')}. Please generate a concise, 3-step learning plan for her, suggesting a logical order and types of courses she should take. Keep the tone encouraging and professional. Structure the response with clear headings for each step.`;
 
   try {
+    const ai = getAi();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
@@ -78,6 +82,7 @@ Project Brief:
 ${text}`;
 
   try {
+    const ai = getAi();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,

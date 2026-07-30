@@ -14,6 +14,3 @@ root.render(
     <App />
   </React.StrictMode>
 );
-
-// App mounted successfully — clear the stale-cache recovery guard.
-try { sessionStorage.removeItem('bsi-cache-recover'); } catch (e) { /* ignore */ }

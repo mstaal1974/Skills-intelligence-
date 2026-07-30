@@ -5,10 +5,6 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
-      // Use relative asset paths so the production build works when served
-      // from any location (root, a sub-path, GitHub Pages, etc.) rather than
-      // hard-coding "/assets/..." which 404s under a sub-path.
-      base: './',
       server: {
         port: 3000,
         host: '0.0.0.0',
