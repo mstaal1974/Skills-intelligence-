@@ -54,6 +54,70 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, children, maxWidth = 'ma
     );
 };
 
+// --- Formatted report renderer -------------------------------------------
+// Renders the light Markdown the AI returns (headings, bold/italic/code,
+// bullet & numbered lists, rules, paragraphs) as clean, professional text.
+// Builds React elements directly — no HTML injection.
+const renderInline = (text: string, keyBase: string): React.ReactNode[] => {
+    const nodes: React.ReactNode[] = [];
+    const regex = /(\*\*[^*]+\*\*|\*[^*\n]+\*|`[^`]+`)/g;
+    let last = 0; let m: RegExpExecArray | null; let k = 0;
+    while ((m = regex.exec(text)) !== null) {
+        if (m.index > last) nodes.push(text.slice(last, m.index));
+        const tok = m[0];
+        if (tok.startsWith('**')) nodes.push(<strong key={`${keyBase}-${k++}`} className="font-semibold text-gray-900">{tok.slice(2, -2)}</strong>);
+        else if (tok.startsWith('`')) nodes.push(<code key={`${keyBase}-${k++}`} className="px-1.5 py-0.5 rounded bg-black/5 text-[0.85em] font-mono">{tok.slice(1, -1)}</code>);
+        else nodes.push(<em key={`${keyBase}-${k++}`}>{tok.slice(1, -1)}</em>);
+        last = m.index + tok.length;
+    }
+    if (last < text.length) nodes.push(text.slice(last));
+    return nodes;
+};
+
+const FormattedReport: React.FC<{ text: string }> = ({ text }) => {
+    const lines = text.replace(/\r/g, '').split('\n');
+    const blocks: React.ReactNode[] = [];
+    const isHr = (t: string) => /^(-{3,}|\*{3,}|_{3,})$/.test(t);
+    const isBullet = (t: string) => /^[*-]\s+/.test(t);
+    const isNum = (t: string) => /^\d+[.)]\s+/.test(t);
+    const isHeading = (t: string) => /^#{1,6}\s+/.test(t);
+    let i = 0; let key = 0;
+    while (i < lines.length) {
+        const t = lines[i].trim();
+        if (t === '') { i++; continue; }
+        if (isHr(t)) { blocks.push(<hr key={key++} className="my-4 border-t border-black/10" />); i++; continue; }
+        const h = /^(#{1,6})\s+(.*)$/.exec(t);
+        if (h) {
+            const lvl = h[1].length;
+            const cls = lvl <= 1 ? 'text-xl font-bold text-gray-900 mt-2'
+                : lvl === 2 ? 'text-lg font-bold text-gray-900 mt-2'
+                : 'text-base font-semibold text-gray-900 mt-1';
+            blocks.push(<h4 key={key++} className={cls}>{renderInline(h[2], `h${key}`)}</h4>);
+            i++; continue;
+        }
+        if (isBullet(t)) {
+            const items: string[] = [];
+            while (i < lines.length && isBullet(lines[i].trim())) { items.push(lines[i].trim().replace(/^[*-]\s+/, '')); i++; }
+            blocks.push(<ul key={key++} className="list-disc pl-5 space-y-1.5 marker:text-gray-400">{items.map((it, j) => <li key={j} className="pl-1">{renderInline(it, `b${key}-${j}`)}</li>)}</ul>);
+            continue;
+        }
+        if (isNum(t)) {
+            const items: string[] = [];
+            while (i < lines.length && isNum(lines[i].trim())) { items.push(lines[i].trim().replace(/^\d+[.)]\s+/, '')); i++; }
+            blocks.push(<ol key={key++} className="list-decimal pl-5 space-y-1.5 marker:text-gray-400 marker:font-semibold">{items.map((it, j) => <li key={j} className="pl-1">{renderInline(it, `o${key}-${j}`)}</li>)}</ol>);
+            continue;
+        }
+        const para: string[] = [];
+        while (i < lines.length) {
+            const lt = lines[i].trim();
+            if (lt === '' || isHr(lt) || isBullet(lt) || isNum(lt) || isHeading(lt)) break;
+            para.push(lt); i++;
+        }
+        blocks.push(<p key={key++} className="text-gray-700 leading-relaxed">{renderInline(para.join(' '), `p${key}`)}</p>);
+    }
+    return <div className="report-body space-y-3 text-sm sm:text-[15px]">{blocks}</div>;
+};
+
 // --- Main App Component ---
 
 const App: React.FC = () => {
@@ -821,7 +885,7 @@ const CareerPathModal: React.FC<CareerPathModalProps> = ({ person, onClose, occu
                             {learningPlan && (
                                 <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                                     <h4 className="font-semibold text-lg text-blue-800 mb-2">Your Personalized Pathway</h4>
-                                    <div className="whitespace-pre-wrap text-gray-700 font-sans">{learningPlan}</div>
+                                    <FormattedReport text={learningPlan} />
                                 </div>
                             )}
                         </div>
@@ -1409,7 +1473,7 @@ const AnalysisSection: React.FC<AnalysisSectionProps> = ({ people, occupations, 
                             <div className="p-4 bg-red-50 rounded-lg"><h4 className="font-semibold text-lg text-red-800 mb-2">Skill Gaps</h4><ul className="space-y-2 text-sm text-red-700">{analysisResult.gapSkills.length > 0 ? analysisResult.gapSkills.map(id => {const skill = getSkillById(id); return skill ? (<li key={id} className="flex justify-between items-center"><span>{skill.name}</span><button onClick={() => setCourseFinderState({open: true, skillId: skill.id})} className="text-purple-600 hover:underline text-xs font-semibold">Find a Course</button></li>) : null;}) : <li>No skill gaps! Perfect fit.</li>}</ul></div>
                         </div>
 
-                        {analysisResult.gapSkills.length > 0 && (<div className="mt-6 border-t pt-6"><button onClick={handleGeneratePlan} disabled={isGeneratingPlan} className="btn-primary font-semibold px-6 py-2 rounded-lg disabled:bg-gray-400">{isGeneratingPlan ? 'Generating Plan...' : 'Generate AI Learning Plan'}</button>{isGeneratingPlan && (<div className="mt-4 flex justify-center"><div className="loader" style={{borderTopColor: '#4A90E2', height: '30px', width: '30px'}}></div></div>)}{learningPlan && (<div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg"><h4 className="font-semibold text-lg text-blue-800 mb-2">Personalized Learning Plan</h4><div className="whitespace-pre-wrap text-gray-700 font-sans">{learningPlan}</div></div>)}</div>)}
+                        {analysisResult.gapSkills.length > 0 && (<div className="mt-6 border-t pt-6"><button onClick={handleGeneratePlan} disabled={isGeneratingPlan} className="btn-primary font-semibold px-6 py-2 rounded-lg disabled:bg-gray-400">{isGeneratingPlan ? 'Generating Plan...' : 'Generate AI Learning Plan'}</button>{isGeneratingPlan && (<div className="mt-4 flex justify-center"><div className="loader" style={{borderTopColor: '#4A90E2', height: '30px', width: '30px'}}></div></div>)}{learningPlan && (<div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg"><h4 className="font-semibold text-lg text-blue-800 mb-2">Personalized Learning Plan</h4><FormattedReport text={learningPlan} /></div>)}</div>)}
                     </div>
                 )}
             </div>
